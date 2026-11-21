@@ -1,0 +1,18 @@
+{
+  "name": "备考复盘本",
+  "short_name": "备考复盘本",
+  "description": "个人备考刷题复盘本，支持图2精排解析、离线缓存与跨端同步",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0D0E11",
+  "theme_color": "#0D0E11",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,277 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #f7f6f2;
+  --bg-card: #ffffff;
+  --bg-elevated: #efece4;
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --text-primary: #181b22;
+  --text-secondary: #5b6270;
+  --text-muted: #88909e;
+  --hl-key-color: #c93b3b;
+  --hl-mark-bg: rgba(201, 59, 59, 0.09);
+  --section-title: #11141b;
+  --code-bg: rgba(15, 23, 42, 0.055);
+  --quote-bg: rgba(15, 23, 42, 0.025);
+  --quote-border: rgba(15, 23, 42, 0.16);
+  --scrollbar-thumb: rgba(15, 23, 42, 0.16);
+
+  --prose-font: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --prose-size: 16px;
+  --prose-lh: 1.88;
+}
+
+html.dark {
+  --bg-app: #0d0e11;
+  --bg-card: #14161b;
+  --bg-elevated: #1b1e25;
+  --border-subtle: rgba(255, 255, 255, 0.065);
+  --text-primary: #e6e8ee;
+  --text-secondary: #949ba8;
+  --text-muted: #656c7a;
+  --hl-key-color: #f06a6a;
+  --hl-mark-bg: rgba(240, 106, 106, 0.13);
+  --section-title: #f5f6fa;
+  --code-bg: rgba(255, 255, 255, 0.07);
+  --quote-bg: rgba(255, 255, 255, 0.028);
+  --quote-border: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+}
+
+html[data-font='sans'] {
+  --prose-font: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+}
+
+html[data-font='serif'] {
+  --prose-font: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', 'STSong',
+    'SimSun', Georgia, serif;
+}
+
+html[data-font='note'] {
+  --prose-font: 'LXGW WenKai', 'Kaiti SC', 'STKaiti', 'KaiTi', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+}
+
+html[data-font-size='sm'] {
+  --prose-size: 14.5px;
+  --prose-lh: 1.8;
+}
+
+html[data-font-size='md'] {
+  --prose-size: 16px;
+  --prose-lh: 1.88;
+}
+
+html[data-font-size='lg'] {
+  --prose-size: 17.5px;
+  --prose-lh: 1.95;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+      'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+
+/* 隐藏移动端横向筛选栏滚动条 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 图片暗黑护眼模式 */
+.review-img-adaptive {
+  transition: filter 180ms ease;
+}
+
+html.dark[data-img-mode='soft'] .review-img-adaptive {
+  filter: brightness(0.92) contrast(1.03);
+}
+
+html.dark[data-img-mode='invert'] .review-img-adaptive,
+.img-force-invert {
+  filter: invert(0.91) hue-rotate(180deg) brightness(0.96);
+}
+
+/* 题干与选项正文字体/字号受全局排印控制 */
+.stem-prose {
+  color: var(--text-primary);
+  font-family: var(--prose-font);
+  font-size: var(--prose-size);
+  line-height: var(--prose-lh);
+  letter-spacing: 0.01em;
+  word-break: break-word;
+}
+
+/* 图 2 灵魂精排：纯净高对比度、无红条、无粉底重点字 */
+.analysis-prose {
+  color: var(--text-primary);
+  font-family: var(--prose-font);
+  font-size: var(--prose-size);
+  line-height: var(--prose-lh);
+  letter-spacing: 0.01em;
+  word-break: break-word;
+}
+
+.analysis-prose > *:first-child {
+  margin-top: 0 !important;
+}
+
+.analysis-prose > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+.analysis-prose .analysis-section-title {
+  font-size: 1.08em;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.015em;
+  color: var(--section-title);
+  padding: 1.1rem 0 0;
+  margin: 1.35rem 0 0.7rem;
+  border-top: 1px solid var(--border-subtle);
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.analysis-prose > .analysis-section-title:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+
+.analysis-prose h1,
+.analysis-prose h2,
+.analysis-prose h3,
+.analysis-prose h4 {
+  color: var(--section-title);
+  font-weight: 700;
+  line-height: 1.48;
+  margin-top: 1.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.analysis-prose p {
+  margin: 0.55rem 0;
+  color: var(--text-primary);
+}
+
+.analysis-prose mark.hl-key,
+.analysis-prose strong {
+  background: transparent;
+  padding: 0;
+  color: var(--hl-key-color);
+  font-weight: 600;
+}
+
+.analysis-prose mark.hl-mark {
+  background-color: var(--hl-mark-bg);
+  padding: 0.05em 0.32em;
+  border-radius: 0.28rem;
+  color: var(--hl-key-color);
+  font-weight: 600;
+}
+
+.analysis-prose ol {
+  list-style-type: decimal;
+  padding-left: 1.45rem;
+  margin: 0.6rem 0;
+}
+
+.analysis-prose ul {
+  list-style-type: disc;
+  padding-left: 1.35rem;
+  margin: 0.5rem 0;
+}
+
+.analysis-prose li {
+  margin: 0.35rem 0;
+  padding-left: 0.15rem;
+}
+
+.analysis-prose li::marker {
+  color: var(--text-secondary);
+}
+
+.analysis-prose ul.nested-list {
+  list-style: none;
+  padding-left: 1.25rem;
+  margin: 0.35rem 0 0.45rem;
+}
+
+.analysis-prose ul.nested-list > li {
+  position: relative;
+  padding-left: 1.15rem;
+  color: var(--text-primary);
+}
+
+.analysis-prose ul.nested-list > li::before {
+  content: '○';
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  line-height: 1.9;
+}
+
+.analysis-prose blockquote {
+  margin: 0.85rem 0;
+  padding: 0.65rem 0.95rem;
+  border-left: 2px solid var(--quote-border);
+  background-color: var(--quote-bg);
+  border-radius: 0 0.45rem 0.45rem 0;
+  color: var(--text-secondary);
+  font-size: 0.94em;
+}
+
+.analysis-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86em;
+  padding: 0.12em 0.38em;
+  border-radius: 0.28rem;
+  background-color: var(--code-bg);
+  color: var(--text-primary);
+}
+
+.analysis-prose pre {
+  margin: 0.8rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.6rem;
+  background-color: var(--code-bg);
+  overflow-x: auto;
+}
+
+.analysis-prose pre code {
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.analysis-prose hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: 1.2rem 0;
+}

@@ -1,0 +1,100 @@
+/** 题目性质分类：错题 / 好题 / 经典母题 */
+export type QuestionType = 'mistake' | 'gem' | 'template';
+
+/** 熟练度三档：生疏 / 模糊 / 已掌握 */
+export type MasteryLevel = 'unfamiliar' | 'vague' | 'mastered';
+
+/** 刷题展示模式：自测（先题后解）/ 直看（题解同屏） */
+export type ReviewMode = 'self_test' | 'direct';
+
+/** 界面配色主题 */
+export type ThemeMode = 'dark' | 'light';
+
+/** 题型目录树节点 */
+export interface FolderNode {
+  id: string;
+  name: string;
+  parentId: string | null;
+  /** 该题型的通用思维链口诀或破题套路 */
+  chainTip?: string;
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** 题干或解析配图（压缩后的 DataURL） */
+export interface QuestionImage {
+  id: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  caption?: string;
+}
+
+/** 单道题目实体 */
+export interface QuestionItem {
+  id: string;
+  folderId: string;
+  questionType: QuestionType;
+  /** 简短标题或题干首句摘要 */
+  title: string;
+  /** 原题文本 */
+  stemText: string;
+  /** 原题附图（支持图推多图/资料分析图表） */
+  images: QuestionImage[];
+  /** 用户错选答案（可选，如 B） */
+  myWrongChoice?: string;
+  /** 正确答案（可选，如 A） */
+  correctAnswer?: string;
+  /** AI 复盘 Markdown 全文 */
+  analysisMarkdown: string;
+  /** 用户自己的考场复盘笔记 */
+  personalNote: string;
+  tags: string[];
+  mastery: MasteryLevel;
+  starred: boolean;
+  reviewCount: number;
+  lastReviewedAt?: number;
+  /** 下次到期复习时间戳（毫秒） */
+  nextReviewAt: number;
+  isSeedDemo?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** 应用全量持久化快照（也是内嵌进自举 HTML 与全量 JSON 备份的数据结构） */
+export interface AppStateSnapshot {
+  version: number;
+  exportedAt: number;
+  theme: ThemeMode;
+  reviewMode: ReviewMode;
+  folders: FolderNode[];
+  questions: QuestionItem[];
+}
+
+/** 轻量进度同步包（不含图片与题干长文，仅同步熟练度、复习记录与个人笔记） */
+export interface ProgressOnlyPatch {
+  kind: 'exam-review-progress-patch';
+  version: number;
+  exportedAt: number;
+  items: Array<{
+    id: string;
+    mastery: MasteryLevel;
+    starred: boolean;
+    personalNote: string;
+    reviewCount: number;
+    lastReviewedAt?: number;
+    nextReviewAt: number;
+    updatedAt: number;
+  }>;
+}
+
+/** 题库筛选条件 */
+export interface ReviewFilter {
+  /** null 表示全题库；否则包含该目录及其所有子孙目录 */
+  folderId: string | null;
+  scope: 'all' | 'due' | 'mistake' | 'gem' | 'template' | 'unmastered' | 'starred';
+  searchQuery: string;
+}
