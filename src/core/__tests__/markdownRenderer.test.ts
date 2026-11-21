@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { renderAnalysisHtml } from '../index';
+import {
+  renderAnalysisHtml,
+  renderStemInlineHtml,
+  stripLatexMarkup,
+} from '../index';
 
 describe('markdownRenderer', () => {
   it('escapes raw HTML to prevent XSS across paragraphs, code, and quotes', () => {
@@ -134,5 +138,113 @@ describe('markdownRenderer', () => {
     expect(html).toContain('<mark class="hl-key">&lt;script&gt;alert(1)&lt;/script&gt;</mark>');
     expect(html).toContain('<mark class="hl-key">a × b ≠ c</mark>');
     expect(html).toContain('纯文本 且 增长率 ≤ 10% ± 1%');
+  });
+
+  it('renders data-analysis fractions and numeric expressions with or without dollar signs', () => {
+    const md = [
+      '户均利润 = 户均营收 × \\frac{总利润}{总营收}',
+      '代入计算：$\\frac{197.6 \\times 12}{10198.5} \\approx 0.232$',
+      '兼容变体：\\dfrac{A}{B} 与 \\tfrac{1}{2}',
+    ].join('\n');
+
+    const html = renderAnalysisHtml(md);
+    expect(html).not.toContain('\\frac');
+    expect(html).not.toContain('\\dfrac');
+    expect(html).not.toContain('\\tfrac');
+    expect(html).not.toContain('$');
+    expect(html).toContain(
+      '<span class="math-frac"><span class="math-num">总利润</span><span class="math-den">总营收</span></span>',
+    );
+    expect(html).toContain(
+      '<span class="math-frac"><span class="math-num">197.6 × 12</span><span class="math-den">10198.5</span></span> ≈ 0.232',
+    );
+    expect(html).toContain(
+      '<span class="math-frac"><span class="math-num">A</span><span class="math-den">B</span></span>',
+    );
+  });
+
+  it('renders nested two-period proportion fractions, multi-line math blocks, roots, and boxed answers', () => {
+    const md = [
+      '两期比重公式：\\frac{\\frac{A}{1+a}}{\\frac{B}{1+b}}',
+      '',
+      '$$',
+      '\\frac{A}{B} \\times \\frac{a-b}{1+a}',
+      '$$',
+      '',
+      '\\[ \\sqrt[3]{27} + (1+r)^2 + \\sqrt{x^2 + y_1} \\]',
+      '',
+      '结论：\\boxed{A}，角度 $90^\\circ$，满足 \\( \\because a \\cdot b \\neq 0 \\therefore \\Delta > 0 \\)。',
+    ].join('\n');
+
+    const html = renderAnalysisHtml(md);
+    // 嵌套分式
+    expect(html).toContain(
+      '<span class="math-frac"><span class="math-num"><span class="math-frac"><span class="math-num">A</span><span class="math-den">1+a</span></span></span><span class="math-den"><span class="math-frac"><span class="math-num">B</span><span class="math-den">1+b</span></span></span></span>',
+    );
+    // 跨行 $$...$$ 块级公式
+    expect(html).toContain('<div class="math-block">');
+    expect(html).toContain(
+      '<div class="math-block"><span class="math-frac"><span class="math-num">A</span><span class="math-den">B</span></span> × <span class="math-frac"><span class="math-num">a-b</span><span class="math-den">1+a</span></span></div>',
+    );
+    // 块级 \[...\] + 根号 + 上下标
+    expect(html).toContain(
+      '<div class="math-block"><span class="math-sqrt"><sup class="math-sqrt-idx">3</sup><span class="math-sqrt-sign">√</span><span class="math-sqrt-body">27</span></span> + (1+r)<sup class="math-sup">2</sup> + <span class="math-sqrt"><span class="math-sqrt-sign">√</span><span class="math-sqrt-body">x<sup class="math-sup">2</sup> + y<sub class="math-sub">1</sub></span></span></div>',
+    );
+    // \boxed 与行内 \(...\) 及扩展符号
+    expect(html).toContain('<span class="math-boxed">A</span>');
+    expect(html).toContain('90°');
+    expect(html).toContain('∵ a · b ≠ 0 ∴ Δ &gt; 0');
+  });
+
+  it('supports color/bold nested in fractions while protecting currency, identifiers, URLs, and XSS', () => {
+    const md = [
+      '高亮嵌套：\\color{#FF5555}{\\frac{增量}{基期}} 与 \\frac{\\color{#FF5555}{\\textbf{总利润}}}{**总营收**}',
+      '括号与符号：\\left(\\frac{1}{1+r}\\right)^3 + \\mathrm{GDP} + \\operatorname{max}(a, b) + \\boldsymbol{v} \\cdots \\infty \\pi \\alpha \\beta \\theta \\angle A \\perp B \\parallel C \\triangle ABC \\quad \\,',
+      '价格保护：成本 $100 涨到 $200，普通下划线 foo_bar_baz 与 `code_1^2` 以及 https://example.com/path_1 不应转换，但 A_1 与 x^{n+1} 应转换。',
+      'XSS 防护：$$\\frac{<script>alert(1)</script>}{\\sqrt{<img src=x onerror=alert(1)>}}$$',
+    ].join('\n');
+
+    const html = renderAnalysisHtml(md);
+    expect(html).toContain(
+      '<mark class="hl-key"><span class="math-frac"><span class="math-num">增量</span><span class="math-den">基期</span></span></mark>',
+    );
+    expect(html).toContain(
+      '<span class="math-frac"><span class="math-num"><mark class="hl-key">总利润</mark></span><span class="math-den"><mark class="hl-key">总营收</mark></span></span>',
+    );
+    expect(html).toContain(
+      '(<span class="math-frac"><span class="math-num">1</span><span class="math-den">1+r</span></span>)<sup class="math-sup">3</sup>',
+    );
+    expect(html).toContain('GDP');
+    expect(html).toContain('max(a, b)');
+    expect(html).toContain('… ∞ π α β θ ∠ A ⊥ B ∥ C △ ABC');
+    expect(html).toContain('成本 $100 涨到 $200');
+    expect(html).toContain('foo_bar_baz');
+    expect(html).toContain('<code>code_1^2</code>');
+    expect(html).toContain('https://example.com/path_1');
+    expect(html).toContain('A<sub class="math-sub">1</sub>');
+    expect(html).toContain('x<sup class="math-sup">n+1</sup>');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('renders stem inline formulas via renderStemInlineHtml and flattens fractions in stripLatexMarkup', () => {
+    const stemHtml = renderStemInlineHtml(
+      '某企业年增长率公式为 \\left(1 + \\frac{r}{100}\\right)^2 - 1，其中 r = \\sqrt{16}，价格 $100 仅作参考，严防 <script>x</script>',
+    );
+    expect(stemHtml).toContain(
+      '(1 + <span class="math-frac"><span class="math-num">r</span><span class="math-den">100</span></span>)<sup class="math-sup">2</sup> - 1',
+    );
+    expect(stemHtml).toContain(
+      '<span class="math-sqrt"><span class="math-sqrt-sign">√</span><span class="math-sqrt-body">16</span></span>',
+    );
+    expect(stemHtml).toContain('价格 $100');
+    expect(stemHtml).not.toContain('<script>');
+    expect(stemHtml).toContain('&lt;script&gt;x&lt;/script&gt;');
+
+    expect(
+      stripLatexMarkup('$\\color{#FF5555}{\\left(\\frac{总利润}{总营收}\\right)} + \\sqrt{x}$'),
+    ).toBe('(总利润/总营收) + √x');
   });
 });

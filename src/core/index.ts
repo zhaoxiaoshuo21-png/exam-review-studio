@@ -14,6 +14,7 @@ import {
   escapeHtml,
   normalizePastedAnalysis,
   renderAnalysisHtml,
+  renderStemInlineHtml,
   stripLatexMarkup,
 } from './markdownRenderer';
 import {
@@ -52,6 +53,7 @@ export {
   parseEmbeddedSnapshotFromHtml,
   readEmbeddedSnapshotFromDocument,
   renderAnalysisHtml,
+  renderStemInlineHtml,
   resetMemoryStorageForTests,
   saveSnapshot,
   serializeSnapshotForScript,

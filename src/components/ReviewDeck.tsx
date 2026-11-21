@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { ReviewDeckProps } from '../types/contracts';
 import type { FolderNode, MasteryLevel, QuestionType } from '../types/schema';
+import { renderStemInlineHtml } from '../core';
 import MarkdownView from './MarkdownView';
 import ImageLightbox from './ImageLightbox';
 
@@ -693,7 +694,10 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
                             <span className="shrink-0 font-medium text-[#586070] dark:text-[#9AA3B2]">
                               {st.marker}
                             </span>
-                            <span className="min-w-0 flex-1">{st.text}</span>
+                            <span
+                              className="min-w-0 flex-1"
+                              dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(st.text) }}
+                            />
                           </div>
                         ))}
                       </div>,
@@ -749,9 +753,8 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
                                         ? 'text-[#A82C2C] dark:text-[#F69898]'
                                         : ''
                                   }`}
-                                >
-                                  {opt.text}
-                                </span>
+                                  dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(opt.text) }}
+                                />
                               </div>
                               {isCorrect && (
                                 <span className="shrink-0 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
@@ -772,9 +775,11 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
                   }
 
                   nodes.push(
-                    <p key={`p-${i}`} className="break-words">
-                      {block.text}
-                    </p>,
+                    <p
+                      key={`p-${i}`}
+                      className="break-words"
+                      dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(block.text) }}
+                    />,
                   );
                   i += 1;
                 }

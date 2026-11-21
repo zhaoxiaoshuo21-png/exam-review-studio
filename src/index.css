@@ -179,14 +179,17 @@ html.dark[data-img-mode='invert'] .review-img-adaptive,
 }
 
 .analysis-prose mark.hl-key,
-.analysis-prose strong {
+.analysis-prose strong,
+.stem-prose mark.hl-key,
+.stem-prose strong {
   background: transparent;
   padding: 0;
   color: var(--hl-key-color);
   font-weight: 600;
 }
 
-.analysis-prose mark.hl-mark {
+.analysis-prose mark.hl-mark,
+.stem-prose mark.hl-mark {
   background-color: var(--hl-mark-bg);
   padding: 0.05em 0.32em;
   border-radius: 0.28rem;
@@ -247,7 +250,8 @@ html.dark[data-img-mode='invert'] .review-img-adaptive,
   font-size: 0.94em;
 }
 
-.analysis-prose code {
+.analysis-prose code,
+.stem-prose code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.86em;
   padding: 0.12em 0.38em;
@@ -274,4 +278,113 @@ html.dark[data-img-mode='invert'] .review-img-adaptive,
   border: 0;
   border-top: 1px solid var(--border-subtle);
   margin: 1.2rem 0;
+}
+
+/* 原生数学公式排印（资料分析与数量关系分式/根号/上下标/方框/块级公式） */
+.analysis-prose .math-frac,
+.stem-prose .math-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 0.22em;
+  line-height: 1.25;
+  font-size: 0.92em;
+}
+
+.analysis-prose .math-frac .math-frac,
+.stem-prose .math-frac .math-frac {
+  font-size: 0.86em;
+}
+
+.analysis-prose .math-num,
+.stem-prose .math-num {
+  display: block;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 0 0.3em 0.12em;
+  border-bottom: 1.2px solid currentColor;
+  width: 100%;
+}
+
+.analysis-prose .math-den,
+.stem-prose .math-den {
+  display: block;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 0.14em 0.3em 0;
+  width: 100%;
+}
+
+.analysis-prose .math-sqrt,
+.stem-prose .math-sqrt {
+  display: inline-flex;
+  align-items: baseline;
+  margin: 0 0.12em;
+}
+
+.analysis-prose .math-sqrt-idx,
+.stem-prose .math-sqrt-idx {
+  font-size: 0.68em;
+  margin-right: 0.05em;
+  transform: translateY(-0.35em);
+}
+
+.analysis-prose .math-sqrt-sign,
+.stem-prose .math-sqrt-sign {
+  font-size: 1.08em;
+  line-height: 1;
+  padding-right: 0.04em;
+}
+
+.analysis-prose .math-sqrt-body,
+.stem-prose .math-sqrt-body {
+  display: inline-block;
+  border-top: 1.2px solid currentColor;
+  padding: 0.05em 0.22em 0;
+}
+
+.analysis-prose .math-sup,
+.stem-prose .math-sup,
+.analysis-prose .math-sub,
+.stem-prose .math-sub {
+  font-size: 0.74em;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+
+.analysis-prose .math-sup,
+.stem-prose .math-sup {
+  top: -0.45em;
+}
+
+.analysis-prose .math-sub,
+.stem-prose .math-sub {
+  bottom: -0.22em;
+}
+
+.analysis-prose .math-boxed,
+.stem-prose .math-boxed {
+  display: inline-block;
+  border: 1.2px solid currentColor;
+  border-radius: 0.3rem;
+  padding: 0.08em 0.42em;
+  margin: 0 0.15em;
+}
+
+.analysis-prose .math-block,
+.stem-prose .math-block {
+  display: block;
+  box-sizing: border-box;
+  margin: 0.95rem 0;
+  padding: 0.85rem 1.1rem;
+  border-radius: 0.65rem;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 1.03em;
+  line-height: 1.7;
 }

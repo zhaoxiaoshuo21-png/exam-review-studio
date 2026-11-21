@@ -15,7 +15,10 @@ function readBracedGroup(
   startIdx: number,
 ): { content: string; endIdx: number } | null {
   let i = startIdx;
-  while (i < str.length && (str[i] === ' ' || str[i] === '\t')) {
+  while (
+    i < str.length &&
+    (str[i] === ' ' || str[i] === '\t' || str[i] === '\n')
+  ) {
     i += 1;
   }
   if (i >= str.length || str[i] !== '{') {
@@ -45,6 +48,48 @@ function readBracedGroup(
   return null;
 }
 
+function readBracketGroup(
+  str: string,
+  startIdx: number,
+): { content: string; endIdx: number } | null {
+  let i = startIdx;
+  while (i < str.length && (str[i] === ' ' || str[i] === '\t')) {
+    i += 1;
+  }
+  if (i >= str.length || str[i] !== '[') {
+    return null;
+  }
+
+  let depth = 0;
+  const contentStart = i + 1;
+  for (let j = i; j < str.length; j += 1) {
+    const ch = str[j];
+    if (ch === '\\' && j + 1 < str.length) {
+      j += 1;
+      continue;
+    }
+    if (ch === '[') {
+      depth += 1;
+    } else if (ch === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          content: str.slice(contentStart, j),
+          endIdx: j + 1,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function stripLeftRightPrefixes(text: string): string {
+  return text
+    .replace(/\\(?:left|right)\./g, '')
+    .replace(/\\(?:left|right)\s*\\([{}])/g, '$1')
+    .replace(/\\(?:left|right)(?![A-Za-z])\s*/g, '');
+}
+
 function replaceLatexSymbols(text: string): string {
   return text
     .replace(/\\(?:rightarrow|Rightarrow)(?![A-Za-z])/g, '→')
@@ -56,66 +101,117 @@ function replaceLatexSymbols(text: string): string {
     .replace(/\\(?:leq|le)(?![A-Za-z])/g, '≤')
     .replace(/\\(?:geq|ge)(?![A-Za-z])/g, '≥')
     .replace(/\\pm(?![A-Za-z])/g, '±')
+    .replace(/\\(?:cdots|ldots|dots)(?![A-Za-z])/g, '…')
+    .replace(/\\cdot(?![A-Za-z])/g, '·')
+    .replace(/\\infty(?![A-Za-z])/g, '∞')
+    .replace(/\^\s*(?:\{\s*\\circ\s*\}|\\circ(?![A-Za-z]))/g, '°')
+    .replace(/\\circ(?![A-Za-z])/g, '°')
+    .replace(/\\Delta(?![A-Za-z])/g, 'Δ')
+    .replace(/\\pi(?![A-Za-z])/g, 'π')
+    .replace(/\\alpha(?![A-Za-z])/g, 'α')
+    .replace(/\\beta(?![A-Za-z])/g, 'β')
+    .replace(/\\theta(?![A-Za-z])/g, 'θ')
+    .replace(/\\because(?![A-Za-z])/g, '∵')
+    .replace(/\\therefore(?![A-Za-z])/g, '∴')
+    .replace(/\\angle(?![A-Za-z])/g, '∠')
+    .replace(/\\perp(?![A-Za-z])/g, '⊥')
+    .replace(/\\parallel(?![A-Za-z])/g, '∥')
+    .replace(/\\triangle(?![A-Za-z])/g, '△')
+    .replace(/\\(?:qquad|quad)(?![A-Za-z])/g, ' ')
+    .replace(/\\[,;:]/g, ' ')
     .replace(/\\%/g, '%');
 }
 
-function unwrapLatexCommand(str: string, cmdName: string): string {
-  let out = '';
-  let i = 0;
-  const prefix = `\\${cmdName}`;
-  while (i < str.length) {
-    if (
-      str.startsWith(prefix, i) &&
-      (i + prefix.length >= str.length || !/[A-Za-z]/.test(str[i + prefix.length]))
-    ) {
-      const group = readBracedGroup(str, i + prefix.length);
-      if (group) {
-        out += unwrapLatexCommand(group.content, cmdName);
-        i = group.endIdx;
-        continue;
-      }
-    }
-    out += str[i];
-    i += 1;
-  }
-  return out;
+function isCommandAt(str: string, index: number, cmdName: string): boolean {
+  if (!str.startsWith(cmdName, index)) return false;
+  const nextPos = index + cmdName.length;
+  return nextPos >= str.length || !/[A-Za-z]/.test(str[nextPos]);
 }
 
-function resolveLatexInnerText(rawInner: string): string {
-  let current = rawInner;
-  for (const cmd of ['textbf', 'mathbf', 'text']) {
-    current = unwrapLatexCommand(current, cmd);
-  }
-  return replaceLatexSymbols(current);
-}
-
-function parseColorOrBoldCommands(
+function findClosingInlineDelimiter(
   str: string,
-  onHighlight: (plainInner: string) => string,
+  startIdx: number,
+  delimiter: string,
+  allowNewline: boolean,
+): number {
+  for (let i = startIdx; i < str.length; i += 1) {
+    if (!allowNewline && str[i] === '\n') {
+      return -1;
+    }
+    if (str.startsWith(delimiter, i) && str[i - 1] !== '\\') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+const MATH_CONTENT_SIGNAL_RE =
+  /\\(?:[A-Za-z]+|%|[()[\],;:])|\^|_|^[A-Za-z0-9+\-*/=<>().,\s]+$/;
+const HAS_MATH_OPERATOR_OR_VAR_RE = /[=+\-*/<>]|[A-Za-z]/;
+
+function isLikelyDollarMath(inner: string, nextAfterClose: string): boolean {
+  if (!inner.trim()) return false;
+  if (/[0-9]/.test(nextAfterClose)) return false;
+  if (/\\(?:[A-Za-z]+|%)|\^|_/.test(inner)) return true;
+  if (
+    MATH_CONTENT_SIGNAL_RE.test(inner) &&
+    HAS_MATH_OPERATOR_OR_VAR_RE.test(inner)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+interface InlineRenderHooks {
+  onHighlight: (innerHtml: string) => string;
+  onFraction: (numHtml: string, denHtml: string) => string;
+  onSqrt: (idxHtml: string | null, bodyHtml: string) => string;
+  onBoxed: (bodyHtml: string) => string;
+  onSup: (innerHtml: string) => string;
+  onSub: (innerHtml: string) => string;
+  onPlainText: (escapedReady: string) => string;
+  enableMarkdownHighlight: boolean;
+}
+
+function renderInlineCore(
+  rawText: string,
+  inMathContext: boolean,
+  hooks: InlineRenderHooks,
 ): string {
+  const tokens: string[] = [];
+  const pushToken = (rendered: string): string => {
+    const idx = tokens.length;
+    tokens.push(rendered);
+    return `\u0000TK${idx}\u0000`;
+  };
+
+  const renderNested = (inner: string, childInMath: boolean): string =>
+    renderInlineCore(inner, childInMath, hooks);
+
+  // 先剥离 \left / \right 定界符修饰，避免打断外层括号与上标结合
+  const cleanedDelims = stripLeftRightPrefixes(rawText);
+
   let out = '';
   let i = 0;
 
-  while (i < str.length) {
-    // 1. 匹配 {\color{...} ...} 或 {\textcolor{...} ...}
-    if (str[i] === '{') {
-      const outer = readBracedGroup(str, i);
+  while (i < cleanedDelims.length) {
+    const ch = cleanedDelims[i];
+
+    // 1. {\color{...} ...} / {\textcolor{...} ...}
+    if (ch === '{') {
+      const outer = readBracedGroup(cleanedDelims, i);
       if (outer) {
         const innerTrimmed = outer.content.trimStart();
-        const colorCmd = innerTrimmed.startsWith('\\textcolor')
+        const colorCmd = isCommandAt(innerTrimmed, 0, '\\textcolor')
           ? '\\textcolor'
-          : innerTrimmed.startsWith('\\color')
+          : isCommandAt(innerTrimmed, 0, '\\color')
             ? '\\color'
             : '';
-        if (
-          colorCmd &&
-          (innerTrimmed.length === colorCmd.length ||
-            !/[A-Za-z]/.test(innerTrimmed[colorCmd.length]))
-        ) {
+        if (colorCmd) {
           const colorSpec = readBracedGroup(innerTrimmed, colorCmd.length);
           if (colorSpec) {
             const rest = innerTrimmed.slice(colorSpec.endIdx).trim();
-            out += onHighlight(resolveLatexInnerText(rest));
+            out += pushToken(hooks.onHighlight(renderNested(rest, inMathContext)));
             i = outer.endIdx;
             continue;
           }
@@ -123,161 +219,316 @@ function parseColorOrBoldCommands(
       }
     }
 
-    // 2. 匹配 \color{...}{\textbf{...}} / \color{...}\textbf{...} / \textcolor{...}{...} / \color{...}{...}
-    if (str[i] === '\\') {
-      const isTextColor =
-        str.startsWith('\\textcolor', i) &&
-        (i + 10 >= str.length || !/[A-Za-z]/.test(str[i + 10]));
-      const isColor =
-        !isTextColor &&
-        str.startsWith('\\color', i) &&
-        (i + 6 >= str.length || !/[A-Za-z]/.test(str[i + 6]));
+    // 2. LaTeX 命令：\color, \textcolor, \textbf, \mathbf, \frac/\dfrac/\tfrac, \sqrt, \boxed, \text/\mathrm/\operatorname/\boldsymbol, \(...\), \[...\]
+    if (ch === '\\') {
+      // 2a. 行内 \( ... \) 与 \[ ... \]
+      if (!inMathContext && cleanedDelims.startsWith('\\(', i)) {
+        const closeIdx = findClosingInlineDelimiter(cleanedDelims, i + 2, '\\)', false);
+        if (closeIdx !== -1) {
+          const inner = cleanedDelims.slice(i + 2, closeIdx).trim();
+          out += pushToken(renderNested(inner, true));
+          i = closeIdx + 2;
+          continue;
+        }
+      }
 
-      if (isTextColor || isColor) {
-        const cmdLen = isTextColor ? 10 : 6;
-        const colorSpec = readBracedGroup(str, i + cmdLen);
+      if (!inMathContext && cleanedDelims.startsWith('\\[', i)) {
+        const closeIdx = findClosingInlineDelimiter(cleanedDelims, i + 2, '\\]', true);
+        if (closeIdx !== -1) {
+          const inner = cleanedDelims.slice(i + 2, closeIdx).trim();
+          out += pushToken(renderNested(inner, true));
+          i = closeIdx + 2;
+          continue;
+        }
+      }
+
+      // 2b. \color / \textcolor
+      const colorCmd = isCommandAt(cleanedDelims, i, '\\textcolor')
+        ? '\\textcolor'
+        : isCommandAt(cleanedDelims, i, '\\color')
+          ? '\\color'
+          : '';
+      if (colorCmd) {
+        const colorSpec = readBracedGroup(cleanedDelims, i + colorCmd.length);
         if (colorSpec) {
           let afterColor = colorSpec.endIdx;
-          while (afterColor < str.length && (str[afterColor] === ' ' || str[afterColor] === '\t')) {
+          while (
+            afterColor < cleanedDelims.length &&
+            (cleanedDelims[afterColor] === ' ' || cleanedDelims[afterColor] === '\t')
+          ) {
             afterColor += 1;
           }
 
-          const boldCmd = str.startsWith('\\textbf', afterColor)
+          const boldCmd = isCommandAt(cleanedDelims, afterColor, '\\textbf')
             ? '\\textbf'
-            : str.startsWith('\\mathbf', afterColor)
+            : isCommandAt(cleanedDelims, afterColor, '\\mathbf')
               ? '\\mathbf'
               : '';
-          if (
-            boldCmd &&
-            (afterColor + boldCmd.length >= str.length ||
-              !/[A-Za-z]/.test(str[afterColor + boldCmd.length]))
-          ) {
-            const boldBody = readBracedGroup(str, afterColor + boldCmd.length);
+          if (boldCmd) {
+            const boldBody = readBracedGroup(
+              cleanedDelims,
+              afterColor + boldCmd.length,
+            );
             if (boldBody) {
-              out += onHighlight(resolveLatexInnerText(boldBody.content));
+              out += pushToken(
+                hooks.onHighlight(renderNested(boldBody.content, inMathContext)),
+              );
               i = boldBody.endIdx;
               continue;
             }
           }
 
-          const bodyGroup = readBracedGroup(str, afterColor);
+          const bodyGroup = readBracedGroup(cleanedDelims, afterColor);
           if (bodyGroup) {
-            out += onHighlight(resolveLatexInnerText(bodyGroup.content));
+            out += pushToken(
+              hooks.onHighlight(renderNested(bodyGroup.content, inMathContext)),
+            );
             i = bodyGroup.endIdx;
             continue;
           }
         }
       }
 
-      // 3. 匹配独立 \textbf{...} 或 \mathbf{...}
-      const boldCmd = str.startsWith('\\textbf', i)
+      // 2c. \textbf / \mathbf
+      const boldCmd = isCommandAt(cleanedDelims, i, '\\textbf')
         ? '\\textbf'
-        : str.startsWith('\\mathbf', i)
+        : isCommandAt(cleanedDelims, i, '\\mathbf')
           ? '\\mathbf'
           : '';
-      if (
-        boldCmd &&
-        (i + boldCmd.length >= str.length || !/[A-Za-z]/.test(str[i + boldCmd.length]))
-      ) {
-        const boldBody = readBracedGroup(str, i + boldCmd.length);
+      if (boldCmd) {
+        const boldBody = readBracedGroup(cleanedDelims, i + boldCmd.length);
         if (boldBody) {
-          out += onHighlight(resolveLatexInnerText(boldBody.content));
+          out += pushToken(
+            hooks.onHighlight(renderNested(boldBody.content, inMathContext)),
+          );
           i = boldBody.endIdx;
           continue;
         }
       }
-    }
 
-    out += str[i];
-    i += 1;
-  }
-
-  return out;
-}
-
-const HAS_LATEX_CMD_RE = /\\(?:[A-Za-z]+|%)|\u0000HL/;
-
-function unwrapMathDollarWrappers(str: string): string {
-  let out = '';
-  let i = 0;
-
-  while (i < str.length) {
-    if (str[i] === '$' && (i === 0 || str[i - 1] !== '\\')) {
-      const isDouble = i + 1 < str.length && str[i + 1] === '$';
-      const delimLen = isDouble ? 2 : 1;
-      let j = i + delimLen;
-      while (j < str.length && str[j] !== '\n') {
-        if (isDouble) {
-          if (str[j] === '$' && j + 1 < str.length && str[j + 1] === '$' && str[j - 1] !== '\\') {
-            break;
+      // 2d. \frac / \dfrac / \tfrac
+      const fracCmd = isCommandAt(cleanedDelims, i, '\\frac')
+        ? '\\frac'
+        : isCommandAt(cleanedDelims, i, '\\dfrac')
+          ? '\\dfrac'
+          : isCommandAt(cleanedDelims, i, '\\tfrac')
+            ? '\\tfrac'
+            : '';
+      if (fracCmd) {
+        const numGroup = readBracedGroup(cleanedDelims, i + fracCmd.length);
+        if (numGroup) {
+          const denGroup = readBracedGroup(cleanedDelims, numGroup.endIdx);
+          if (denGroup) {
+            const numHtml = renderNested(numGroup.content.trim(), true);
+            const denHtml = renderNested(denGroup.content.trim(), true);
+            out += pushToken(hooks.onFraction(numHtml, denHtml));
+            i = denGroup.endIdx;
+            continue;
           }
-        } else if (str[j] === '$' && str[j - 1] !== '\\') {
-          break;
         }
-        j += 1;
       }
 
-      const hasClosing = isDouble
-        ? j + 1 < str.length && str[j] === '$' && str[j + 1] === '$'
-        : j < str.length && str[j] === '$';
-      if (hasClosing) {
-        const nextAfterClose = j + delimLen < str.length ? str[j + delimLen] : '';
-        const inner = str.slice(i + delimLen, j);
-        if (HAS_LATEX_CMD_RE.test(inner) && !/[0-9]/.test(nextAfterClose)) {
-          out += inner.trim();
-          i = j + delimLen;
+      // 2e. \sqrt[n]{body} / \sqrt{body}
+      if (isCommandAt(cleanedDelims, i, '\\sqrt')) {
+        let cursor = i + 5;
+        const idxGroup = readBracketGroup(cleanedDelims, cursor);
+        if (idxGroup) {
+          cursor = idxGroup.endIdx;
+        }
+        const bodyGroup = readBracedGroup(cleanedDelims, cursor);
+        if (bodyGroup) {
+          const idxHtml = idxGroup ? renderNested(idxGroup.content.trim(), true) : null;
+          const bodyHtml = renderNested(bodyGroup.content.trim(), true);
+          out += pushToken(hooks.onSqrt(idxHtml, bodyHtml));
+          i = bodyGroup.endIdx;
+          continue;
+        }
+      }
+
+      // 2f. \boxed{body}
+      if (isCommandAt(cleanedDelims, i, '\\boxed')) {
+        const boxedGroup = readBracedGroup(cleanedDelims, i + 6);
+        if (boxedGroup) {
+          const bodyHtml = renderNested(boxedGroup.content.trim(), true);
+          out += pushToken(hooks.onBoxed(bodyHtml));
+          i = boxedGroup.endIdx;
+          continue;
+        }
+      }
+
+      // 2g. \text / \mathrm / \operatorname / \boldsymbol 剥离包装保留内容
+      const plainCmd = isCommandAt(cleanedDelims, i, '\\operatorname')
+        ? '\\operatorname'
+        : isCommandAt(cleanedDelims, i, '\\boldsymbol')
+          ? '\\boldsymbol'
+          : isCommandAt(cleanedDelims, i, '\\mathrm')
+            ? '\\mathrm'
+            : isCommandAt(cleanedDelims, i, '\\text')
+              ? '\\text'
+              : '';
+      if (plainCmd) {
+        const group = readBracedGroup(cleanedDelims, i + plainCmd.length);
+        if (group) {
+          out += pushToken(renderNested(group.content, false));
+          i = group.endIdx;
           continue;
         }
       }
     }
 
-    out += str[i];
+    // 3. $...$ 与行内 $$...$$（仅在非数学递归顶层拆封，同时保护 $100 和 $200）
+    if (!inMathContext && ch === '$' && (i === 0 || cleanedDelims[i - 1] !== '\\')) {
+      const isDouble =
+        i + 1 < cleanedDelims.length && cleanedDelims[i + 1] === '$';
+      const delimLen = isDouble ? 2 : 1;
+      const closeIdx = findClosingInlineDelimiter(
+        cleanedDelims,
+        i + delimLen,
+        isDouble ? '$$' : '$',
+        isDouble,
+      );
+      if (closeIdx !== -1) {
+        const nextAfterClose =
+          closeIdx + delimLen < cleanedDelims.length
+            ? cleanedDelims[closeIdx + delimLen]
+            : '';
+        const inner = cleanedDelims.slice(i + delimLen, closeIdx);
+        if (isLikelyDollarMath(inner, nextAfterClose)) {
+          out += pushToken(renderNested(inner.trim(), true));
+          i = closeIdx + delimLen;
+          continue;
+        }
+      }
+    }
+
+    // 4. 角度简写 ^\circ / ^{\circ} -> °（必须在通用上标前拦截）
+    if (ch === '^') {
+      const restSlice = cleanedDelims.slice(i);
+      const degMatch = restSlice.match(/^\^\s*(?:\{\s*\\circ\s*\}|\\circ(?![A-Za-z]))/);
+      if (degMatch) {
+        out += '°';
+        i += degMatch[0].length;
+        continue;
+      }
+
+      // 花括号上标 ^{...}
+      const supGroup = readBracedGroup(cleanedDelims, i + 1);
+      if (supGroup) {
+        out += pushToken(hooks.onSup(renderNested(supGroup.content.trim(), true)));
+        i = supGroup.endIdx;
+        continue;
+      }
+
+      // 数学上下文或紧跟字母/数字/右括号/数学Token的单字符上标 ^x
+      const prevChar = i > 0 ? cleanedDelims[i - 1] : '';
+      const nextChar = i + 1 < cleanedDelims.length ? cleanedDelims[i + 1] : '';
+      const afterNext = i + 2 < cleanedDelims.length ? cleanedDelims[i + 2] : '';
+      const validSupBase =
+        inMathContext || /[A-Za-z0-9)\u0000]/.test(prevChar);
+      if (
+        validSupBase &&
+        /[A-Za-z0-9]/.test(nextChar) &&
+        !/[A-Za-z0-9_]/.test(afterNext)
+      ) {
+        out += pushToken(hooks.onSup(hooks.onPlainText(nextChar)));
+        i += 2;
+        continue;
+      }
+    }
+
+    // 5. 下标 _{...} 与安全单字符下标 _x（绝不误伤 foo_bar_baz 或 URL）
+    if (ch === '_') {
+      const subGroup = readBracedGroup(cleanedDelims, i + 1);
+      if (subGroup) {
+        out += pushToken(hooks.onSub(renderNested(subGroup.content.trim(), true)));
+        i = subGroup.endIdx;
+        continue;
+      }
+
+      const prevChar = i > 0 ? cleanedDelims[i - 1] : '';
+      const beforePrev = i > 1 ? cleanedDelims[i - 2] : '';
+      const nextChar = i + 1 < cleanedDelims.length ? cleanedDelims[i + 1] : '';
+      const afterNext = i + 2 < cleanedDelims.length ? cleanedDelims[i + 2] : '';
+
+      const isSingleSubTarget =
+        /[A-Za-z0-9]/.test(nextChar) && !/[A-Za-z0-9_]/.test(afterNext);
+      const validSubBase = inMathContext
+        ? /[A-Za-z0-9)\u0000]/.test(prevChar)
+        : /[A-Za-z0-9)\u0000]/.test(prevChar) &&
+          (prevChar === ')' ||
+            prevChar === '\u0000' ||
+            !/[A-Za-z0-9_/:.]/.test(beforePrev));
+
+      if (validSubBase && isSingleSubTarget) {
+        out += pushToken(hooks.onSub(hooks.onPlainText(nextChar)));
+        i += 2;
+        continue;
+      }
+    }
+
+    out += ch;
     i += 1;
   }
 
-  return out;
+  const withSymbols = replaceLatexSymbols(out).replace(/\\\$/g, '$');
+  let rendered = hooks.onPlainText(withSymbols);
+
+  if (hooks.enableMarkdownHighlight) {
+    rendered = rendered
+      .replace(/\*\*(.+?)\*\*/g, '<mark class="hl-key">$1</mark>')
+      .replace(/==(.+?)==/g, '<mark class="hl-key hl-mark">$1</mark>');
+  }
+
+  return rendered.replace(/\u0000TK(\d+)\u0000/g, (_match, idxStr: string) => {
+    return tokens[Number(idxStr)] ?? '';
+  });
 }
 
-function resolveLatexCommon(
-  sanitized: string,
-  wrapHighlight: (plainInner: string) => string,
-): { text: string; hlBlocks: string[] } {
-  const hlBlocks: string[] = [];
-  const withLatexPlaceholders = parseColorOrBoldCommands(
-    sanitized,
-    (plainInner) => {
-      const index = hlBlocks.length;
-      hlBlocks.push(wrapHighlight(plainInner));
-      return `\u0000HL${index}\u0000`;
-    },
-  );
+const HTML_RENDER_HOOKS: InlineRenderHooks = {
+  onHighlight: (innerHtml) => {
+    if (
+      innerHtml.startsWith('<mark class="hl-key">') &&
+      innerHtml.endsWith('</mark>') &&
+      innerHtml.indexOf('</mark>') === innerHtml.length - 7
+    ) {
+      return innerHtml;
+    }
+    return `<mark class="hl-key">${innerHtml}</mark>`;
+  },
+  onFraction: (numHtml, denHtml) =>
+    `<span class="math-frac"><span class="math-num">${numHtml}</span><span class="math-den">${denHtml}</span></span>`,
+  onSqrt: (idxHtml, bodyHtml) =>
+    idxHtml !== null
+      ? `<span class="math-sqrt"><sup class="math-sqrt-idx">${idxHtml}</sup><span class="math-sqrt-sign">√</span><span class="math-sqrt-body">${bodyHtml}</span></span>`
+      : `<span class="math-sqrt"><span class="math-sqrt-sign">√</span><span class="math-sqrt-body">${bodyHtml}</span></span>`,
+  onBoxed: (bodyHtml) => `<span class="math-boxed">${bodyHtml}</span>`,
+  onSup: (innerHtml) => `<sup class="math-sup">${innerHtml}</sup>`,
+  onSub: (innerHtml) => `<sub class="math-sub">${innerHtml}</sub>`,
+  onPlainText: (raw) => escapeHtml(raw),
+  enableMarkdownHighlight: true,
+};
 
-  const unwrappedMath = unwrapMathDollarWrappers(withLatexPlaceholders);
-  const unwrappedText = unwrapLatexCommand(unwrappedMath, 'text');
-  const withSymbols = replaceLatexSymbols(unwrappedText).replace(/\\\$/g, '$');
-  return { text: withSymbols, hlBlocks };
-}
+const PLAIN_STRIP_HOOKS: InlineRenderHooks = {
+  onHighlight: (inner) => inner,
+  onFraction: (num, den) => `${num}/${den}`,
+  onSqrt: (idx, body) => (idx ? `${idx}√${body}` : `√${body}`),
+  onBoxed: (body) => body,
+  onSup: (inner) => `^${inner}`,
+  onSub: (inner) => `_${inner}`,
+  onPlainText: (raw) => raw,
+  enableMarkdownHighlight: false,
+};
 
 /**
- * 剥离常见 LaTeX 着色/加粗/公式包裹，保留干净可读纯文本（供批量标题提取等复用）。
+ * 剥离常见 LaTeX 着色/加粗/分式/根号/公式包裹，保留干净可读纯文本（供批量标题提取等复用）。
  */
 export function stripLatexMarkup(rawText: string): string {
   if (!rawText) return '';
   const sanitized = rawText.replace(/\u0000/g, '');
-  const { text, hlBlocks } = resolveLatexCommon(sanitized, (inner) => inner);
-  return text.replace(/\u0000HL(\d+)\u0000/g, (_match, idxStr: string) => {
-    return hlBlocks[Number(idxStr)] ?? '';
-  });
+  return renderInlineCore(sanitized, false, PLAIN_STRIP_HOOKS);
 }
 
-/**
- * 渲染行内 Markdown：
- * - 行内代码 `...`
- * - LaTeX 着色/加粗（$\color{...}{\textbf{...}}$ / \textcolor / \textbf 等）与数学符号（防 XSS）
- * - **文字** -> <mark class="hl-key">文字</mark>（纯暖红粗体重点字）
- * - ==文字== -> <mark class="hl-key hl-mark">文字</mark>（柔和底纹高亮）
- */
-function renderInline(rawText: string): string {
+function renderInlineInternal(rawText: string, inMathContext: boolean): string {
   const codeBlocks: string[] = [];
   const sanitized = rawText.replace(/\u0000/g, '');
 
@@ -290,23 +541,35 @@ function renderInline(rawText: string): string {
     },
   );
 
-  const { text: withSymbols, hlBlocks } = resolveLatexCommon(
+  const rendered = renderInlineCore(
     withCodePlaceholders,
-    (plainInner) => `<mark class="hl-key">${escapeHtml(plainInner)}</mark>`,
+    inMathContext,
+    HTML_RENDER_HOOKS,
   );
 
-  const escaped = escapeHtml(withSymbols);
-  const highlighted = escaped
-    .replace(/\*\*(.+?)\*\*/g, '<mark class="hl-key">$1</mark>')
-    .replace(/==(.+?)==/g, '<mark class="hl-key hl-mark">$1</mark>');
+  return rendered.replace(/\u0000CODE(\d+)\u0000/g, (_match, idxStr: string) => {
+    return codeBlocks[Number(idxStr)] ?? '';
+  });
+}
 
-  return highlighted
-    .replace(/\u0000HL(\d+)\u0000/g, (_match, idxStr: string) => {
-      return hlBlocks[Number(idxStr)] ?? '';
-    })
-    .replace(/\u0000CODE(\d+)\u0000/g, (_match, idxStr: string) => {
-      return codeBlocks[Number(idxStr)] ?? '';
-    });
+function renderInline(rawText: string): string {
+  return renderInlineInternal(rawText, false);
+}
+
+/**
+ * 渲染题干/选项行内文本与数学公式（防 XSS）：
+ * 供 `ReviewDeck` 原题区段落、陈述句与选项安全呈现分式、根号、上下标、数学符号与重点强调。
+ */
+export function renderStemInlineHtml(rawText: string): string {
+  if (!rawText) return '';
+  const normalized = rawText.replace(/\r\n?/g, '\n');
+  if (!normalized.includes('\n')) {
+    return renderInlineInternal(normalized, false);
+  }
+  return normalized
+    .split('\n')
+    .map((line) => renderInlineInternal(line, false))
+    .join('<br />');
 }
 
 interface ListLevel {
@@ -410,7 +673,7 @@ function splitStickyLongLine(line: string): string[] {
  * 前置规整富文本粘贴丢失换行的 AI 解析：
  * - 自动将同行的 `一、【...】`、`二、【...】` 等大板块标题拆成独立行
  * - 对丢失换行的长行，在典型复盘标签及句末标点后的列表项前补回换行
- * - 完整保留已正常换行的 Markdown 与代码块
+ * - 完整保留已正常换行的 Markdown、代码块与块级公式
  */
 export function normalizePastedAnalysis(markdown: string): string {
   if (!markdown || !markdown.trim()) {
@@ -421,6 +684,7 @@ export function normalizePastedAnalysis(markdown: string): string {
   const rawLines = normalized.split('\n');
   const resultLines: string[] = [];
   let inCodeFence = false;
+  let mathDelimiter: '$$' | '\\[' | null = null;
 
   for (const line of rawLines) {
     const trimmed = line.trim();
@@ -431,6 +695,24 @@ export function normalizePastedAnalysis(markdown: string): string {
     }
 
     if (inCodeFence) {
+      resultLines.push(line);
+      continue;
+    }
+
+    if (mathDelimiter !== null) {
+      resultLines.push(line);
+      const endDelim = mathDelimiter === '$$' ? '$$' : '\\]';
+      if (trimmed.endsWith(endDelim)) {
+        mathDelimiter = null;
+      }
+      continue;
+    }
+
+    if (
+      (trimmed.startsWith('$$') && trimmed.slice(2).indexOf('$$') === -1) ||
+      (trimmed.startsWith('\\[') && trimmed.slice(2).indexOf('\\]') === -1)
+    ) {
+      mathDelimiter = trimmed.startsWith('$$') ? '$$' : '\\[';
       resultLines.push(line);
       continue;
     }
@@ -482,10 +764,18 @@ function isHeadingLine(trimmed: string): { level: number; text: string } | null 
   return null;
 }
 
+function renderMathBlockHtml(rawFormula: string): string {
+  const trimmed = rawFormula.trim();
+  if (!trimmed) return '<div class="math-block"></div>';
+  const rendered = renderInlineInternal(trimmed, true);
+  const formatted = rendered.replace(/\n+/g, '<br />');
+  return `<div class="math-block">${formatted}</div>`;
+}
+
 /**
  * 零外部依赖、防 XSS 的公考复盘 Markdown 渲染器：
  * - 先对粘连富文本粘贴内容做板块/标签换行规整
- * - 对全部文本执行 HTML 转义 (< > & " ')，支持安全 LaTeX 暖红高亮与常见数学符号
+ * - 对全部文本执行 HTML 转义 (< > & " ')，支持安全递归 LaTeX 分式/根号/方框/上下标/块级公式与暖红高亮
  * - 识别中文板块标题（一、【...】、二、【...】）与 Markdown 标题（# / ## / ###），输出带 class="analysis-section-title" 的标题
  * - 将 **文字** 渲染为 <mark class="hl-key">文字</mark>，==文字== 渲染为 <mark class="hl-key hl-mark">文字</mark>
  * - 支持有序列表、多级无序列表（含缩进与 - / * / • / ○，子列表带 class="nested-list"）、行内代码、引用块与普通段落
@@ -504,6 +794,8 @@ export function renderAnalysisHtml(markdown: string): string {
   let quoteLines: string[] = [];
   let inCodeFence = false;
   let codeFenceLines: string[] = [];
+  let mathBlockMode: '$$' | '\\[' | null = null;
+  let mathBlockLines: string[] = [];
 
   const flushParagraph = (): void => {
     if (paragraphLines.length === 0) return;
@@ -546,6 +838,20 @@ export function renderAnalysisHtml(markdown: string): string {
     out.push(`<pre><code>${escapeHtml(codeFenceLines.join('\n'))}</code></pre>`);
     inCodeFence = false;
     codeFenceLines = [];
+  };
+
+  const flushUnclosedMathBlock = (): void => {
+    if (mathBlockMode === null) return;
+    const openDelim = mathBlockMode;
+    mathBlockMode = null;
+    const raw = `${openDelim}${mathBlockLines.join('\n')}`;
+    mathBlockLines = [];
+    for (const part of raw.split('\n')) {
+      if (part.trim()) {
+        paragraphLines.push(part.trim());
+      }
+    }
+    flushParagraph();
   };
 
   const pushListItem = (
@@ -643,6 +949,22 @@ export function renderAnalysisHtml(markdown: string): string {
       continue;
     }
 
+    if (mathBlockMode !== null) {
+      const closeDelim = mathBlockMode === '$$' ? '$$' : '\\]';
+      if (trimmed.endsWith(closeDelim)) {
+        const beforeClose = trimmed.slice(0, -closeDelim.length).trim();
+        if (beforeClose) {
+          mathBlockLines.push(beforeClose);
+        }
+        out.push(renderMathBlockHtml(mathBlockLines.join('\n')));
+        mathBlockMode = null;
+        mathBlockLines = [];
+      } else {
+        mathBlockLines.push(line);
+      }
+      continue;
+    }
+
     if (FENCE_RE.test(trimmed)) {
       flushParagraph();
       flushQuote();
@@ -663,6 +985,53 @@ export function renderAnalysisHtml(markdown: string): string {
           flushLists();
         }
       }
+      continue;
+    }
+
+    // 独立块级公式：单行或多行 $$...$$ 与 \[...\]
+    if (
+      trimmed.startsWith('$$') &&
+      trimmed.endsWith('$$') &&
+      trimmed.length > 4 &&
+      trimmed.slice(2, -2).indexOf('$$') === -1
+    ) {
+      flushParagraph();
+      flushQuote();
+      flushLists();
+      out.push(renderMathBlockHtml(trimmed.slice(2, -2)));
+      continue;
+    }
+
+    if (trimmed.startsWith('$$') && trimmed.slice(2).indexOf('$$') === -1) {
+      flushParagraph();
+      flushQuote();
+      flushLists();
+      mathBlockMode = '$$';
+      const firstBody = trimmed.slice(2).trim();
+      mathBlockLines = firstBody ? [firstBody] : [];
+      continue;
+    }
+
+    if (
+      trimmed.startsWith('\\[') &&
+      trimmed.endsWith('\\]') &&
+      trimmed.length > 4 &&
+      trimmed.slice(2, -2).indexOf('\\]') === -1
+    ) {
+      flushParagraph();
+      flushQuote();
+      flushLists();
+      out.push(renderMathBlockHtml(trimmed.slice(2, -2)));
+      continue;
+    }
+
+    if (trimmed.startsWith('\\[') && trimmed.slice(2).indexOf('\\]') === -1) {
+      flushParagraph();
+      flushQuote();
+      flushLists();
+      mathBlockMode = '\\[';
+      const firstBody = trimmed.slice(2).trim();
+      mathBlockLines = firstBody ? [firstBody] : [];
       continue;
     }
 
@@ -725,6 +1094,7 @@ export function renderAnalysisHtml(markdown: string): string {
     paragraphLines.push(trimmed);
   }
 
+  flushUnclosedMathBlock();
   flushCodeFence();
   flushParagraph();
   flushQuote();
