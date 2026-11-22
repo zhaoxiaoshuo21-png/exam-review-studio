@@ -12,13 +12,14 @@ import {
   Maximize2,
   Pencil,
   Plus,
+  RotateCcw,
   Star,
   Tag,
   Trash2,
 } from 'lucide-react';
 import type { ReviewDeckProps } from '../types/contracts';
 import type { FolderNode, MasteryLevel, QuestionType } from '../types/schema';
-import { renderStemInlineHtml } from '../core';
+import { extractCorrectAnswer, renderStemInlineHtml } from '../core';
 import MarkdownView from './MarkdownView';
 import ImageLightbox from './ImageLightbox';
 
@@ -262,6 +263,7 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   const question = questions.length > 0 ? questions[safeIndex] : undefined;
 
   const [isAnalysisOpen, setIsAnalysisOpen] = useState<boolean>(reviewMode === 'direct');
+  const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isTipExpanded, setIsTipExpanded] = useState<boolean>(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
@@ -298,6 +300,7 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   // 切题或切换自测/直看模式时重置解析与弹窗状态
   useEffect(() => {
     setIsAnalysisOpen(reviewMode === 'direct');
+    setSelectedChoice(null);
     setConfirmDeleteId(null);
     setLightboxOpen(false);
     setImgOverride({});
@@ -355,12 +358,24 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
       } else if (e.key === '3') {
         e.preventDefault();
         onRateMastery(question.id, 'mastered');
+      } else if (/^[a-dA-D]$/.test(e.key) && hasParsedOptions) {
+        e.preventDefault();
+        setSelectedChoice(e.key.toUpperCase());
+        setIsAnalysisOpen(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [question, safeIndex, questions.length, lightboxOpen, onChangeIndex, onRateMastery]);
+  }, [
+    question,
+    safeIndex,
+    questions.length,
+    lightboxOpen,
+    hasParsedOptions,
+    onChangeIndex,
+    onRateMastery,
+  ]);
 
   if (!question) {
     return (
@@ -394,8 +409,11 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   const isNoteDirty = noteDraft !== question.personalNote;
   const isConfirmingDelete = confirmDeleteId === question.id;
 
-  const correctLetter = normalizeAnswerLetter(question.correctAnswer);
+  const correctLetter =
+    normalizeAnswerLetter(question.correctAnswer) ??
+    normalizeAnswerLetter(extractCorrectAnswer(question.analysisMarkdown));
   const wrongLetter = normalizeAnswerLetter(question.myWrongChoice);
+  const displayCorrectAnswer = question.correctAnswer || correctLetter || undefined;
 
   const handleSaveNote = () => {
     if (!isNoteDirty) return;
@@ -629,8 +647,8 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
               Boolean(question.title.trim()) &&
               !isRedundantTitle(question.title, question.stemText);
             const showAnswerBadges =
-              Boolean(question.myWrongChoice || question.correctAnswer) &&
-              (!hasParsedOptions || !isAnalysisOpen);
+              Boolean(question.myWrongChoice || displayCorrectAnswer) &&
+              (!hasParsedOptions || (!isAnalysisOpen && selectedChoice === null));
             if (!showTitle && !showAnswerBadges) return null;
 
             return (
@@ -645,22 +663,22 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
 
                 {showAnswerBadges && (
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    {isAnalysisOpen ? (
+                    {isAnalysisOpen || selectedChoice !== null ? (
                       <>
                         {question.myWrongChoice && (
                           <span className="rounded-md bg-[#C93B3B]/10 px-2 py-0.5 font-medium text-[#C93B3B] dark:bg-[#F06A6A]/15 dark:text-[#F06A6A]">
                             错选 {question.myWrongChoice}
                           </span>
                         )}
-                        {question.correctAnswer && (
+                        {displayCorrectAnswer && (
                           <span className="rounded-md bg-emerald-600/10 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                            正解 {question.correctAnswer}
+                            正解 {displayCorrectAnswer}
                           </span>
                         )}
                       </>
                     ) : (
                       <span className="text-[11px] text-[#7C8594] dark:text-[#6F7787]">
-                        展开解析后核对选项
+                        点击下方选项作答或按空格展开解析
                       </span>
                     )}
                   </div>
@@ -711,62 +729,108 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
                       options.push(stemBlocks[i] as Extract<StemBlock, { kind: 'option' }>);
                       i += 1;
                     }
+                    const isRevealed = isAnalysisOpen || selectedChoice !== null;
+                    const effectiveWrongChoice = selectedChoice
+                      ? correctLetter && selectedChoice !== correctLetter
+                        ? selectedChoice
+                        : null
+                      : wrongLetter;
+
                     nodes.push(
                       <div key={`opts-${i}`} className="mt-4 space-y-2">
+                        {selectedChoice !== null && (
+                          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                            <span className="text-[#586070] dark:text-[#9AA3B2]">
+                              已选{' '}
+                              <strong className="font-semibold text-[#181B22] dark:text-[#F5F7FB]">
+                                {selectedChoice}
+                              </strong>
+                              {correctLetter
+                                ? selectedChoice === correctLetter
+                                  ? ' · 回答正确'
+                                  : ` · 正确答案为 ${correctLetter}`
+                                : ''}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedChoice(null);
+                                if (reviewMode === 'self_test') {
+                                  setIsAnalysisOpen(false);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-[#586070] hover:bg-black/[0.04] hover:text-[#181B22] dark:text-[#9AA3B2] dark:hover:bg-white/[0.06] dark:hover:text-[#F5F7FB] transition-colors"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              重选 / 重做本题
+                            </button>
+                          </div>
+                        )}
+
                         {options.map((opt) => {
-                          const isCorrect =
-                            isAnalysisOpen && correctLetter !== null && opt.letter === correctLetter;
-                          const isWrong =
-                            isAnalysisOpen &&
-                            wrongLetter !== null &&
-                            opt.letter === wrongLetter &&
+                          const isUserPickedCorrect =
+                            selectedChoice !== null &&
+                            correctLetter !== null &&
+                            selectedChoice === opt.letter &&
+                            opt.letter === correctLetter;
+                          const isCorrectOption =
+                            isRevealed && correctLetter !== null && opt.letter === correctLetter;
+                          const isWrongOption =
+                            isRevealed &&
+                            effectiveWrongChoice !== null &&
+                            opt.letter === effectiveWrongChoice &&
                             opt.letter !== correctLetter;
 
                           return (
-                            <div
+                            <button
                               key={opt.letter}
-                              className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors ${
-                                isCorrect
-                                  ? 'bg-emerald-600/[0.08] dark:bg-emerald-500/[0.11]'
-                                  : isWrong
-                                    ? 'bg-[#C93B3B]/[0.07] dark:bg-[#F06A6A]/[0.1]'
-                                    : 'bg-black/[0.02] dark:bg-white/[0.025]'
+                              type="button"
+                              onClick={() => {
+                                setSelectedChoice(opt.letter);
+                                setIsAnalysisOpen(true);
+                              }}
+                              className={`group/opt flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-all ${
+                                isCorrectOption
+                                  ? 'border-emerald-500/35 bg-emerald-600/[0.08] dark:border-emerald-400/35 dark:bg-emerald-500/[0.11]'
+                                  : isWrongOption
+                                    ? 'border-[#C93B3B]/35 bg-[#C93B3B]/[0.07] dark:border-[#F06A6A]/35 dark:bg-[#F06A6A]/[0.1]'
+                                    : 'border-transparent bg-black/[0.02] hover:border-slate-900/15 hover:bg-black/[0.04] dark:bg-white/[0.025] dark:hover:border-white/15 dark:hover:bg-white/[0.05]'
                               }`}
                             >
                               <div className="flex min-w-0 items-center gap-3">
                                 <span
                                   className={`flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-                                    isCorrect
+                                    isCorrectOption
                                       ? 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-[#0D0E11]'
-                                      : isWrong
+                                      : isWrongOption
                                         ? 'bg-[#C93B3B] text-white dark:bg-[#F06A6A] dark:text-[#0D0E11]'
-                                        : 'border border-slate-300/90 bg-white text-[#586070] dark:border-white/15 dark:bg-white/[0.05] dark:text-[#9AA3B2]'
+                                        : 'border border-slate-300/90 bg-white text-[#586070] group-hover/opt:border-slate-400 dark:border-white/15 dark:bg-white/[0.05] dark:text-[#9AA3B2] dark:group-hover/opt:border-white/30'
                                   }`}
                                 >
                                   {opt.letter}
                                 </span>
                                 <span
                                   className={`min-w-0 break-words ${
-                                    isCorrect
+                                    isCorrectOption
                                       ? 'font-medium text-emerald-800 dark:text-emerald-200'
-                                      : isWrong
+                                      : isWrongOption
                                         ? 'text-[#A82C2C] dark:text-[#F69898]'
                                         : ''
                                   }`}
                                   dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(opt.text) }}
                                 />
                               </div>
-                              {isCorrect && (
+                              {isCorrectOption && (
                                 <span className="shrink-0 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                                  正解
+                                  {isUserPickedCorrect ? '✓ 回答正确' : '✓ 正确答案'}
                                 </span>
                               )}
-                              {isWrong && (
+                              {isWrongOption && (
                                 <span className="shrink-0 text-[11px] font-medium text-[#C93B3B] dark:text-[#F06A6A]">
-                                  错选
+                                  {selectedChoice === opt.letter ? '✗ 你的选择' : '错选'}
                                 </span>
                               )}
-                            </div>
+                            </button>
                           );
                         })}
                       </div>,

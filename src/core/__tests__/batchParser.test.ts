@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseBatchAnalysis } from '../index';
+import { extractCorrectAnswer, parseBatchAnalysis } from '../index';
 
 describe('batchParser', () => {
   it('splits multi-question AI output with varied question header formats', () => {
@@ -81,6 +81,19 @@ describe('batchParser', () => {
     expect(items[0].suggestedTitle).toBe('建设现代化产业体系');
     expect(items[0].suggestedTitle).not.toContain('\\color');
     expect(items[0].suggestedTitle).not.toContain('$');
+  });
+
+  it('extracts correctAnswer across LaTeX color/bold wrappers, parenthetical notes, deduction phrases, and boxed notation', () => {
+    expect(
+      extractCorrectAnswer('• 正确项： $\\color{#FF5555}{\\textbf{D项}}$。'),
+    ).toBe('D');
+    expect(
+      extractCorrectAnswer('实战推导：答案必选 $\\color{#FF5555}{\\textbf{D}}$。'),
+    ).toBe('D');
+    expect(extractCorrectAnswer('正确项（本题选非）：D')).toBe('D');
+    expect(extractCorrectAnswer('根据比例同构直接秒选 A。')).toBe('A');
+    expect(extractCorrectAnswer('综合以上分析，最终结论为 \\boxed{C项}')).toBe('C');
+    expect(extractCorrectAnswer('- **A. ①④⑤（正确项）**：唯一正解')).toBe('A');
   });
 
   it('returns empty array for empty text', () => {

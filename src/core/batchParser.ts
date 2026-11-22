@@ -4,11 +4,15 @@ import { stripLatexMarkup } from './markdownRenderer';
 const QUESTION_HEADER_RE =
   /^(?:#{1,4}\s*)?(?:\*\*)?[【\[（(]?\s*((?:第\s*[0-9一二三四五六七八九十百]+\s*[题道]|题目\s*[0-9一二三四五六七八九十百]+|错题\s*[0-9一二三四五六七八九十百]+|Question\s*[0-9]+|Q\s*[0-9]+))\s*[】\]）)]?(?:[:：.\s—\-]+(.*?))?(?:\*\*)?$/i;
 
-const ANSWER_PATTERNS: RegExp[] = [
-  /(?:正确项|正确答案|参考答案|标准答案|本题答案|正确选项)\s*[：:是为]\s*(?:\*\*|==|【)?([A-D]{1,4}|[对错√×])(?![A-Za-z])/i,
-  /【(?:正确)?答案】\s*(?:\*\*|==)?([A-D]{1,4}|[对错√×])(?![A-Za-z])/i,
-  /(?:^|\s)(?:答案|故选|本题选)\s*[：:是为]\s*(?:\*\*|==|【)?([A-D]{1,4}|[对错√×])(?![A-Za-z])/i,
+const CLEANED_ANSWER_PATTERNS: RegExp[] = [
+  /(?:正确项|正确答案|正确选项|参考答案|标准答案|本题答案)\s*(?:（[^）]{0,30}）|\([^)]{0,30}\))?\s*[：:是为]?\s*[【\[]?\s*([A-H]{1,4}|[对错√×])(?:\s*项|[\s.、。，,；;！!）)\]]|$)/i,
+  /(?:【(?:正确)?答案】|(?:^|[\s，。；;•\-*○])答案)\s*(?:（[^）]{0,30}）|\([^)]{0,30}\))?\s*[：:是为]\s*[【\[]?\s*([A-H]{1,4}|[对错√×])(?:\s*项|[\s.、。，,；;！!）)\]]|$)/i,
+  /(?:^|[\n\s•\-*○])([A-H])(?:\s*项|[.、\s][^（(\n]{0,30})?\s*[（(](?:正确项|正确答案|正确选项)[）)]/i,
+  /(?:答案必选|故正确答案为|正确答案为|秒选|直接选|本题选|故选|因此选|答案选|最终选|锁定选项|锁定答案|锁定)\s*[：:是为]?\s*[【\[]?\s*([A-H]{1,4})(?:\s*项|[\s.、。，,；;！!）)\]]|$)/i,
 ];
+
+const BOXED_ANSWER_RE =
+  /\\boxed\{\s*(?:\\(?:textbf|mathbf|text)\{\s*)?([A-H]{1,4})(?:\s*项)?\s*\}?\s*\}/i;
 
 function stripMarkdownDecorators(text: string): string {
   return stripLatexMarkup(text)
@@ -20,13 +24,29 @@ function stripMarkdownDecorators(text: string): string {
     .trim();
 }
 
-function extractCorrectAnswer(text: string): string | undefined {
-  for (const pattern of ANSWER_PATTERNS) {
-    const match = text.match(pattern);
+/**
+ * 从 AI 解析或题目文本中智能提取正确答案字母（支持剥离 LaTeX 着色/加粗、括号说明、实战推导结论句与 \boxed{A}）。
+ */
+export function extractCorrectAnswer(text: string): string | undefined {
+  if (!text || !text.trim()) return undefined;
+
+  const cleaned = stripLatexMarkup(text)
+    .replace(/\*\*/g, '')
+    .replace(/==/g, '')
+    .replace(/`/g, '');
+
+  for (const pattern of CLEANED_ANSWER_PATTERNS) {
+    const match = cleaned.match(pattern);
     if (match?.[1]) {
       return match[1].toUpperCase();
     }
   }
+
+  const boxedMatch = text.match(BOXED_ANSWER_RE);
+  if (boxedMatch?.[1]) {
+    return boxedMatch[1].toUpperCase();
+  }
+
   return undefined;
 }
 

@@ -1,5 +1,5 @@
 import type { CoreEngineContracts } from '../types/contracts';
-import { parseBatchAnalysis } from './batchParser';
+import { extractCorrectAnswer, parseBatchAnalysis } from './batchParser';
 import {
   EMBEDDED_DATA_SCRIPT_ID,
   buildSelfContainedHtmlString,
@@ -44,6 +44,7 @@ export {
   exportProgressPatch,
   exportSelfContainedHtml,
   extractClipboardImages,
+  extractCorrectAnswer,
   getDescendantFolderIds,
   isViteDevMode,
   loadInitialSnapshot,

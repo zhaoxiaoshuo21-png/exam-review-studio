@@ -12,6 +12,7 @@ import {
 import {
   compressImageFile,
   extractClipboardImages,
+  extractCorrectAnswer,
   stripLatexMarkup,
 } from '../core';
 import type { QuestionDraftInput } from '../types/contracts';
@@ -399,6 +400,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const autoDetectedAnswer = useMemo(
+    () => extractCorrectAnswer(analysisMarkdown) ?? '',
+    [analysisMarkdown],
+  );
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -556,6 +562,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
     const resolvedTitle =
       title.trim() || deriveAutoTitle(stemText, analysisMarkdown);
 
+    const finalCorrect =
+      correctAnswer.trim().toUpperCase() || autoDetectedAnswer || undefined;
+    const finalWrong = myWrongChoice.trim().toUpperCase() || undefined;
+
     onSave({
       id: editingQuestion?.id,
       folderId,
@@ -563,8 +573,8 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       title: resolvedTitle,
       stemText: stemText.trim(),
       images,
-      myWrongChoice: myWrongChoice.trim() || undefined,
-      correctAnswer: correctAnswer.trim() || undefined,
+      myWrongChoice: finalWrong,
+      correctAnswer: finalCorrect,
       analysisMarkdown: analysisMarkdown.trim(),
       personalNote: personalNote.trim(),
       tags: parsedTags,
@@ -690,7 +700,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
           {/* 第二排：标题、错选、正解、标签 */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-            <div className="sm:col-span-5">
+            <div className="sm:col-span-4">
               <label className="mb-1 block text-xs font-medium text-[#5B6270] dark:text-[#949BA8]">
                 标题（可选，留空自动从题干/解析提取）
               </label>
@@ -703,7 +713,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:col-span-3">
+            <div className="grid grid-cols-2 gap-2 sm:col-span-4">
               <div>
                 <label className="mb-1 block text-xs font-medium text-[#5B6270] dark:text-[#949BA8]">
                   错选答案
@@ -712,19 +722,30 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   type="text"
                   value={myWrongChoice}
                   onChange={(e) => setMyWrongChoice(e.target.value)}
-                  placeholder="如 B"
+                  placeholder="可选，复盘时直接点击左栏选项即可自测"
                   className="h-9 w-full rounded-lg border border-slate-900/[0.1] bg-[#F7F6F2] px-2.5 text-sm text-[#181B22] placeholder:text-[#88909E] focus:border-slate-900/30 focus:bg-white focus:outline-none dark:border-white/[0.08] dark:bg-[#0D0E11] dark:text-[#E6E8EE] dark:placeholder:text-[#656C7A]"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#5B6270] dark:text-[#949BA8]">
-                  正确答案
-                </label>
+                <div className="mb-1 flex items-center justify-between gap-1">
+                  <label className="text-xs font-medium text-[#5B6270] dark:text-[#949BA8]">
+                    正确答案
+                  </label>
+                  {autoDetectedAnswer && !correctAnswer.trim() && (
+                    <span className="rounded bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      自动识别: {autoDetectedAnswer}
+                    </span>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={correctAnswer}
                   onChange={(e) => setCorrectAnswer(e.target.value)}
-                  placeholder="如 A"
+                  placeholder={
+                    autoDetectedAnswer
+                      ? `已从解析自动识别：${autoDetectedAnswer}（可留空）`
+                      : '留空将自动从 AI 解析提取'
+                  }
                   className="h-9 w-full rounded-lg border border-slate-900/[0.1] bg-[#F7F6F2] px-2.5 text-sm text-[#181B22] placeholder:text-[#88909E] focus:border-slate-900/30 focus:bg-white focus:outline-none dark:border-white/[0.08] dark:bg-[#0D0E11] dark:text-[#E6E8EE] dark:placeholder:text-[#656C7A]"
                 />
               </div>
