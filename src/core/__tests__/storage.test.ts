@@ -236,4 +236,63 @@ describe('storage', () => {
     expect(activeQuestions).toHaveLength(1);
     expect(activeQuestions[0].id).toBe('user-q-1');
   });
+
+  it('preserves material questions with subQuestions and sub-images across mergeSnapshots', () => {
+    const local = createSeedSnapshot();
+    const incoming = structuredClone(local);
+
+    incoming.questions.push({
+      ...local.questions[0],
+      id: 'mat-q-1',
+      entryKind: 'material',
+      title: '2025年工业经济资料分析（一拖二）',
+      stemText: '共用文字材料与图表数据',
+      images: [
+        {
+          id: 'mat-img-1',
+          dataUrl: 'data:image/png;base64,bWF0ZXJpYWw=',
+          width: 800,
+          height: 400,
+        },
+      ],
+      subQuestions: [
+        {
+          id: 'sub-1',
+          label: '第1题',
+          stemText: '第一小题题干\nA. 10\nB. 20',
+          images: [
+            {
+              id: 'sub-img-1',
+              dataUrl: 'data:image/png;base64,c3ViMQ==',
+              width: 300,
+              height: 200,
+            },
+          ],
+          correctAnswer: 'A',
+          analysisMarkdown: '第一小题解析',
+          personalNote: '第一小题笔记',
+        },
+        {
+          id: 'sub-2',
+          label: '第2题',
+          stemText: '第二小题题干\nA. 上升\nB. 下降',
+          images: [],
+          correctAnswer: 'B',
+          analysisMarkdown: '第二小题解析',
+        },
+      ],
+      isSeedDemo: false,
+      createdAt: Date.now() + 1000,
+      updatedAt: Date.now() + 1000,
+    });
+
+    const merged = mergeSnapshots(local, incoming);
+    const mat = merged.questions.find((q) => q.id === 'mat-q-1');
+    expect(mat?.entryKind).toBe('material');
+    expect(mat?.images).toHaveLength(1);
+    expect(mat?.subQuestions).toHaveLength(2);
+    expect(mat?.subQuestions?.[0].images[0].dataUrl).toBe('data:image/png;base64,c3ViMQ==');
+    expect(mat?.subQuestions?.[0].personalNote).toBe('第一小题笔记');
+    expect(mat?.subQuestions?.[1].correctAnswer).toBe('B');
+  });
 });

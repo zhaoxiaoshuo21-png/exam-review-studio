@@ -1,5 +1,9 @@
 import type { CoreEngineContracts } from '../types/contracts';
-import { extractCorrectAnswer, parseBatchAnalysis } from './batchParser';
+import {
+  extractCorrectAnswer,
+  parseBatchAnalysis,
+  parseMaterialPack,
+} from './batchParser';
 import {
   EMBEDDED_DATA_SCRIPT_ID,
   buildSelfContainedHtmlString,
@@ -52,6 +56,7 @@ export {
   normalizePastedAnalysis,
   parseBatchAnalysis,
   parseEmbeddedSnapshotFromHtml,
+  parseMaterialPack,
   readEmbeddedSnapshotFromDocument,
   renderAnalysisHtml,
   renderStemInlineHtml,

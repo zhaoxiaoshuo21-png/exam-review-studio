@@ -18,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { ReviewDeckProps } from '../types/contracts';
-import type { FolderNode, MasteryLevel, QuestionType } from '../types/schema';
+import type { FolderNode, MasteryLevel, QuestionImage, QuestionType } from '../types/schema';
 import { extractCorrectAnswer, renderStemInlineHtml } from '../core';
 import MarkdownView from './MarkdownView';
 import ImageLightbox from './ImageLightbox';
@@ -174,7 +174,10 @@ function isRedundantTitle(title: string, stemText: string): boolean {
 
   const strippedStem = stemText
     .trim()
-    .replace(/^(?:[（(【\[]?(?:单选题|多选题|不定项选择题|判断题|填空题|简答题|单选|多选)[）)】\]]?|\d+[.、．)）])\s*/i, '')
+    .replace(
+      /^(?:[（(【\[]?(?:单选题|多选题|不定项选择题|判断题|填空题|简答题|单选|多选)[）)】\]]?|\d+[.、．)）])\s*/i,
+      '',
+    )
     .replace(/\s+/g, '');
   return strippedStem.startsWith(cleanedTitle);
 }
@@ -238,9 +241,9 @@ function formatDueText(nextReviewAt: number, reviewCount: number): string {
 }
 
 /**
- * 一体化极简复盘工作台（v2）：
- * 去除外层套框与厚重分割卡片，采用图 1 原题/选项排印、图 2 解析区、单图悬浮护眼反色胶囊、
- * 沉静磨砂自测遮罩以及低饱和微描边熟练度操作栏。
+ * 一体化极简复盘工作台（v2.5）：
+ * 同时完整支持普通单题（single）与材料组合题（material 一拖N：共用材料/图表折叠、小题胶囊条、
+ * 每道小题独立选项判题、独立附图灯箱、独立 AI 解析与小题考场笔记保存）。
  */
 export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   questions,
@@ -262,18 +265,43 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
     questions.length > 0 ? Math.max(0, Math.min(currentIndex, questions.length - 1)) : 0;
   const question = questions.length > 0 ? questions[safeIndex] : undefined;
 
+  const isMaterialQuestion =
+    Boolean(question) &&
+    question!.entryKind === 'material' &&
+    Array.isArray(question!.subQuestions) &&
+    question!.subQuestions!.length > 0;
+  const subQuestions = isMaterialQuestion ? question!.subQuestions! : [];
+
+  // 普通单题状态
   const [isAnalysisOpen, setIsAnalysisOpen] = useState<boolean>(reviewMode === 'direct');
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+
+  // 材料组合题状态
+  const [activeSubIndex, setActiveSubIndex] = useState<number>(0);
+  const [selectedChoiceBySubId, setSelectedChoiceBySubId] = useState<Record<string, string | null>>(
+    {},
+  );
+  const [analysisOpenBySubId, setAnalysisOpenBySubId] = useState<Record<string, boolean>>({});
+  const [isMaterialCollapsed, setIsMaterialCollapsed] = useState<boolean>(false);
+  const [materialNoteScope, setMaterialNoteScope] = useState<'sub' | 'main'>('sub');
+
   const [isTipExpanded, setIsTipExpanded] = useState<boolean>(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
-  const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [lightboxState, setLightboxState] = useState<{
+    images: QuestionImage[];
+    index: number;
+    open: boolean;
+  }>({ images: [], index: 0, open: false });
   const [imgOverride, setImgOverride] = useState<Record<string, 'invert' | 'normal'>>({});
   const [globalDarkInvert, setGlobalDarkInvert] = useState<boolean>(() => {
     if (typeof document === 'undefined') return false;
     const root = document.documentElement;
     return root.classList.contains('dark') && root.dataset.imgMode === 'invert';
   });
+
+  const safeSubIndex =
+    subQuestions.length > 0 ? Math.max(0, Math.min(activeSubIndex, subQuestions.length - 1)) : 0;
+  const activeSub = subQuestions.length > 0 ? subQuestions[safeSubIndex] : undefined;
 
   const [noteDraft, setNoteDraft] = useState<string>(question?.personalNote ?? '');
   const [noteSavedToast, setNoteSavedToast] = useState<boolean>(false);
@@ -284,9 +312,7 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   useEffect(() => {
     const syncRootAttr = () => {
       const root = document.documentElement;
-      setGlobalDarkInvert(
-        root.classList.contains('dark') && root.dataset.imgMode === 'invert',
-      );
+      setGlobalDarkInvert(root.classList.contains('dark') && root.dataset.imgMode === 'invert');
     };
     syncRootAttr();
     const observer = new MutationObserver(syncRootAttr);
@@ -297,19 +323,34 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // 切题或切换自测/直看模式时重置解析与弹窗状态
+  // 切大题时重置全部答题、折叠与灯箱状态
+  useEffect(() => {
+    setSelectedChoice(null);
+    setActiveSubIndex(0);
+    setSelectedChoiceBySubId({});
+    setIsMaterialCollapsed(false);
+    setMaterialNoteScope('sub');
+    setConfirmDeleteId(null);
+    setLightboxState((prev) => (prev.open ? { ...prev, open: false } : prev));
+    setImgOverride({});
+  }, [question?.id]);
+
+  // 切大题或切换自测/直看模式时重置解析展开状态
   useEffect(() => {
     setIsAnalysisOpen(reviewMode === 'direct');
-    setSelectedChoice(null);
-    setConfirmDeleteId(null);
-    setLightboxOpen(false);
-    setImgOverride({});
+    setAnalysisOpenBySubId({});
   }, [question?.id, reviewMode]);
 
+  const activeUnderlyingNote = isMaterialQuestion
+    ? materialNoteScope === 'sub'
+      ? activeSub?.personalNote ?? ''
+      : question?.personalNote ?? ''
+    : question?.personalNote ?? '';
+
   useEffect(() => {
-    setNoteDraft(question?.personalNote ?? '');
+    setNoteDraft(activeUnderlyingNote);
     setNoteSavedToast(false);
-  }, [question?.id, question?.personalNote]);
+  }, [question?.id, activeSub?.id, materialNoteScope, activeUnderlyingNote]);
 
   const folderInfo = useMemo(
     () => (question ? resolveFolderChain(folders, question.folderId) : null),
@@ -321,24 +362,43 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
     [question],
   );
 
-  const hasParsedOptions = useMemo(
-    () => stemBlocks.some((b) => b.kind === 'option'),
-    [stemBlocks],
+  const subStemBlocks = useMemo(
+    () => (activeSub ? parseStemBlocks(activeSub.stemText) : []),
+    [activeSub],
   );
+
+  const hasSingleParsedOptions = useMemo(
+    () => !isMaterialQuestion && stemBlocks.some((b) => b.kind === 'option'),
+    [isMaterialQuestion, stemBlocks],
+  );
+
+  const hasSubParsedOptions = useMemo(
+    () => isMaterialQuestion && subStemBlocks.some((b) => b.kind === 'option'),
+    [isMaterialQuestion, subStemBlocks],
+  );
+
+  const activeHasOptions = isMaterialQuestion ? hasSubParsedOptions : hasSingleParsedOptions;
 
   // 全局键盘快捷键（非输入焦点且无模态弹窗打开时生效）
   useEffect(() => {
     if (!question) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (lightboxOpen) return;
+      if (lightboxState.open) return;
       if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) return;
 
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
-        setIsAnalysisOpen((prev) => !prev);
+        if (isMaterialQuestion && activeSub) {
+          setAnalysisOpenBySubId((prev) => {
+            const currentOpen = prev[activeSub.id] ?? reviewMode === 'direct';
+            return { ...prev, [activeSub.id]: !currentOpen };
+          });
+        } else {
+          setIsAnalysisOpen((prev) => !prev);
+        }
       } else if (e.key === 'ArrowLeft') {
         if (safeIndex > 0) {
           e.preventDefault();
@@ -358,10 +418,16 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
       } else if (e.key === '3') {
         e.preventDefault();
         onRateMastery(question.id, 'mastered');
-      } else if (/^[a-dA-D]$/.test(e.key) && hasParsedOptions) {
+      } else if (/^[a-dA-D]$/.test(e.key) && activeHasOptions) {
         e.preventDefault();
-        setSelectedChoice(e.key.toUpperCase());
-        setIsAnalysisOpen(true);
+        const picked = e.key.toUpperCase();
+        if (isMaterialQuestion && activeSub) {
+          setSelectedChoiceBySubId((prev) => ({ ...prev, [activeSub.id]: picked }));
+          setAnalysisOpenBySubId((prev) => ({ ...prev, [activeSub.id]: true }));
+        } else {
+          setSelectedChoice(picked);
+          setIsAnalysisOpen(true);
+        }
       }
     };
 
@@ -371,8 +437,11 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
     question,
     safeIndex,
     questions.length,
-    lightboxOpen,
-    hasParsedOptions,
+    lightboxState.open,
+    activeHasOptions,
+    isMaterialQuestion,
+    activeSub,
+    reviewMode,
     onChangeIndex,
     onRateMastery,
   ]);
@@ -406,24 +475,55 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
   const typeMeta = QUESTION_TYPE_META[question.questionType];
   const dueText = formatDueText(question.nextReviewAt, question.reviewCount);
   const progressPercent = Math.round(((safeIndex + 1) / questions.length) * 100);
-  const isNoteDirty = noteDraft !== question.personalNote;
+  const isNoteDirty = noteDraft !== activeUnderlyingNote;
   const isConfirmingDelete = confirmDeleteId === question.id;
 
-  const correctLetter =
+  const singleCorrectLetter =
     normalizeAnswerLetter(question.correctAnswer) ??
     normalizeAnswerLetter(extractCorrectAnswer(question.analysisMarkdown));
-  const wrongLetter = normalizeAnswerLetter(question.myWrongChoice);
-  const displayCorrectAnswer = question.correctAnswer || correctLetter || undefined;
+  const singleWrongLetter = normalizeAnswerLetter(question.myWrongChoice);
+  const singleDisplayCorrectAnswer = question.correctAnswer || singleCorrectLetter || undefined;
+
+  const subCorrectLetter = activeSub
+    ? normalizeAnswerLetter(activeSub.correctAnswer) ??
+      normalizeAnswerLetter(extractCorrectAnswer(activeSub.analysisMarkdown))
+    : null;
+  const subWrongLetter = activeSub ? normalizeAnswerLetter(activeSub.myWrongChoice) : null;
+  const subDisplayCorrectAnswer = activeSub
+    ? activeSub.correctAnswer || subCorrectLetter || undefined
+    : undefined;
+  const activeSubChoice = activeSub ? selectedChoiceBySubId[activeSub.id] ?? null : null;
+  const isSubAnalysisOpen = activeSub
+    ? analysisOpenBySubId[activeSub.id] ?? reviewMode === 'direct'
+    : false;
 
   const handleSaveNote = () => {
     if (!isNoteDirty) return;
-    onUpdateQuestionInline(question.id, { personalNote: noteDraft });
+    if (isMaterialQuestion && activeSub && materialNoteScope === 'sub') {
+      const updatedSubs = subQuestions.map((sub) =>
+        sub.id === activeSub.id ? { ...sub, personalNote: noteDraft } : sub,
+      );
+      onUpdateQuestionInline(question.id, { subQuestions: updatedSubs });
+    } else {
+      onUpdateQuestionInline(question.id, { personalNote: noteDraft });
+    }
     setNoteSavedToast(true);
     window.setTimeout(() => setNoteSavedToast(false), 1800);
   };
 
+  const handleSaveAnalysis = (nextMarkdown: string) => {
+    if (isMaterialQuestion && activeSub) {
+      const updatedSubs = subQuestions.map((sub) =>
+        sub.id === activeSub.id ? { ...sub, analysisMarkdown: nextMarkdown } : sub,
+      );
+      onUpdateQuestionInline(question.id, { subQuestions: updatedSubs });
+    } else {
+      onUpdateQuestionInline(question.id, { analysisMarkdown: nextMarkdown });
+    }
+  };
+
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (lightboxOpen || e.touches.length !== 1) {
+    if (lightboxState.open || e.touches.length !== 1) {
       touchStartRef.current = null;
       return;
     }
@@ -454,9 +554,8 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
     }
   };
 
-  const openImageAt = (idx: number) => {
-    setLightboxIndex(idx);
-    setLightboxOpen(true);
+  const openLightboxWith = (images: QuestionImage[], idx: number) => {
+    setLightboxState({ images, index: idx, open: true });
   };
 
   const toggleImageInvert = (imgId: string) => {
@@ -470,6 +569,267 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
       };
     });
   };
+
+  const renderImageGrid = (images: QuestionImage[], keyPrefix: string, compact = false) => {
+    if (images.length === 0) return null;
+    return (
+      <div
+        className={`mt-4 grid gap-3 ${
+          images.length === 1 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'
+        }`}
+      >
+        {images.map((img, idx) => {
+          const override = imgOverride[img.id];
+          const isInverted =
+            override === 'invert' || (override === undefined && globalDarkInvert);
+          const imgFilterClass =
+            override === 'invert'
+              ? 'img-force-invert'
+              : override === 'normal'
+                ? ''
+                : 'review-img-adaptive';
+
+          return (
+            <div key={`${keyPrefix}-${img.id}`} className="group relative">
+              <div
+                onClick={() => openLightboxWith(images, idx)}
+                className="relative cursor-zoom-in overflow-hidden rounded-xl border border-slate-900/[0.06] dark:border-white/[0.06]"
+              >
+                <img
+                  src={img.dataUrl}
+                  alt={img.caption || `原题附图 ${idx + 1}`}
+                  className={`block w-full bg-white object-contain ${imgFilterClass} ${
+                    images.length === 1
+                      ? compact
+                        ? 'max-h-[340px]'
+                        : 'max-h-[460px]'
+                      : 'max-h-60'
+                  }`}
+                />
+
+                {/* 右上角悬浮毛玻璃微胶囊：护眼反色切换 + 放大看图 */}
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-2.5 right-2.5 z-10 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/55 backdrop-blur-md px-1.5 py-1 text-[11px] text-white/90 shadow-sm"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleImageInvert(img.id)}
+                    aria-pressed={isInverted}
+                    title="切换护眼反色"
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-colors ${
+                      isInverted
+                        ? 'bg-white text-[#0D0E11] font-medium'
+                        : 'text-white/85 hover:bg-white/15'
+                    }`}
+                  >
+                    <Contrast className="h-3 w-3" />
+                    <span>反色</span>
+                  </button>
+                  <span className="h-3 w-px bg-white/20" />
+                  <button
+                    type="button"
+                    onClick={() => openLightboxWith(images, idx)}
+                    title="放大看高清原图"
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-white/90 hover:bg-white/15 transition-colors"
+                  >
+                    <Maximize2 className="h-3 w-3" />
+                    <span>放大</span>
+                  </button>
+                </div>
+              </div>
+
+              {img.caption && (
+                <p className="mt-1.5 text-center text-xs text-[#7C8594] dark:text-[#6F7787]">
+                  {img.caption}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderStemAndOptions = (params: {
+    blocks: StemBlock[];
+    selected: string | null;
+    revealed: boolean;
+    correctLetter: string | null;
+    wrongLetter: string | null;
+    onPickChoice: (letter: string) => void;
+    onResetChoice: () => void;
+    resetLabel: string;
+    emptyText: string;
+  }) => {
+    const {
+      blocks,
+      selected,
+      revealed,
+      correctLetter,
+      wrongLetter,
+      onPickChoice,
+      onResetChoice,
+      resetLabel,
+      emptyText,
+    } = params;
+
+    if (blocks.length === 0) {
+      return <p className="text-sm text-[#7C8594] dark:text-[#6F7787]">{emptyText}</p>;
+    }
+
+    const nodes: React.ReactNode[] = [];
+    let i = 0;
+    while (i < blocks.length) {
+      const block = blocks[i];
+      if (block.kind === 'statement') {
+        const group: Array<Extract<StemBlock, { kind: 'statement' }>> = [];
+        while (i < blocks.length && blocks[i].kind === 'statement') {
+          group.push(blocks[i] as Extract<StemBlock, { kind: 'statement' }>);
+          i += 1;
+        }
+        nodes.push(
+          <div key={`stmt-${i}`} className="my-3 space-y-2 pl-0.5">
+            {group.map((st, idx) => (
+              <div key={`${st.marker}-${idx}`} className="flex items-baseline gap-2.5">
+                <span className="shrink-0 font-medium text-[#586070] dark:text-[#9AA3B2]">
+                  {st.marker}
+                </span>
+                <span
+                  className="min-w-0 flex-1"
+                  dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(st.text) }}
+                />
+              </div>
+            ))}
+          </div>,
+        );
+        continue;
+      }
+
+      if (block.kind === 'option') {
+        const options: Array<Extract<StemBlock, { kind: 'option' }>> = [];
+        while (i < blocks.length && blocks[i].kind === 'option') {
+          options.push(blocks[i] as Extract<StemBlock, { kind: 'option' }>);
+          i += 1;
+        }
+        const isRevealed = revealed || selected !== null;
+        const effectiveWrongChoice = selected
+          ? correctLetter && selected !== correctLetter
+            ? selected
+            : null
+          : wrongLetter;
+
+        nodes.push(
+          <div key={`opts-${i}`} className="mt-4 space-y-2">
+            {selected !== null && (
+              <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                <span className="text-[#586070] dark:text-[#9AA3B2]">
+                  已选{' '}
+                  <strong className="font-semibold text-[#181B22] dark:text-[#F5F7FB]">
+                    {selected}
+                  </strong>
+                  {correctLetter
+                    ? selected === correctLetter
+                      ? ' · 回答正确'
+                      : ` · 正确答案为 ${correctLetter}`
+                    : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={onResetChoice}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-[#586070] hover:bg-black/[0.04] hover:text-[#181B22] dark:text-[#9AA3B2] dark:hover:bg-white/[0.06] dark:hover:text-[#F5F7FB] transition-colors"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  {resetLabel}
+                </button>
+              </div>
+            )}
+
+            {options.map((opt) => {
+              const isUserPickedCorrect =
+                selected !== null &&
+                correctLetter !== null &&
+                selected === opt.letter &&
+                opt.letter === correctLetter;
+              const isCorrectOption =
+                isRevealed && correctLetter !== null && opt.letter === correctLetter;
+              const isWrongOption =
+                isRevealed &&
+                effectiveWrongChoice !== null &&
+                opt.letter === effectiveWrongChoice &&
+                opt.letter !== correctLetter;
+
+              return (
+                <button
+                  key={opt.letter}
+                  type="button"
+                  onClick={() => onPickChoice(opt.letter)}
+                  className={`group/opt flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-all ${
+                    isCorrectOption
+                      ? 'border-emerald-500/35 bg-emerald-600/[0.08] dark:border-emerald-400/35 dark:bg-emerald-500/[0.11]'
+                      : isWrongOption
+                        ? 'border-[#C93B3B]/35 bg-[#C93B3B]/[0.07] dark:border-[#F06A6A]/35 dark:bg-[#F06A6A]/[0.1]'
+                        : 'border-transparent bg-black/[0.02] hover:border-slate-900/15 hover:bg-black/[0.04] dark:bg-white/[0.025] dark:hover:border-white/15 dark:hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span
+                      className={`flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
+                        isCorrectOption
+                          ? 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-[#0D0E11]'
+                          : isWrongOption
+                            ? 'bg-[#C93B3B] text-white dark:bg-[#F06A6A] dark:text-[#0D0E11]'
+                            : 'border border-slate-300/90 bg-white text-[#586070] group-hover/opt:border-slate-400 dark:border-white/15 dark:bg-white/[0.05] dark:text-[#9AA3B2] dark:group-hover/opt:border-white/30'
+                      }`}
+                    >
+                      {opt.letter}
+                    </span>
+                    <span
+                      className={`min-w-0 break-words ${
+                        isCorrectOption
+                          ? 'font-medium text-emerald-800 dark:text-emerald-200'
+                          : isWrongOption
+                            ? 'text-[#A82C2C] dark:text-[#F69898]'
+                            : ''
+                      }`}
+                      dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(opt.text) }}
+                    />
+                  </div>
+                  {isCorrectOption && (
+                    <span className="shrink-0 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                      {isUserPickedCorrect ? '✓ 回答正确' : '✓ 正确答案'}
+                    </span>
+                  )}
+                  {isWrongOption && (
+                    <span className="shrink-0 text-[11px] font-medium text-[#C93B3B] dark:text-[#F06A6A]">
+                      {selected === opt.letter ? '✗ 你的选择' : '错选'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>,
+        );
+        continue;
+      }
+
+      nodes.push(
+        <p
+          key={`p-${i}`}
+          className="break-words"
+          dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(block.text) }}
+        />,
+      );
+      i += 1;
+    }
+
+    return nodes;
+  };
+
+  const currentAnalysisOpen = isMaterialQuestion ? isSubAnalysisOpen : isAnalysisOpen;
+  const currentAnalysisMarkdown = isMaterialQuestion
+    ? activeSub?.analysisMarkdown ?? ''
+    : question.analysisMarkdown;
 
   return (
     <div
@@ -487,6 +847,14 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
             </span>
             <span className="text-slate-300 dark:text-white/15">·</span>
             <span className={`font-medium ${typeMeta.textClass}`}>{typeMeta.label}</span>
+            {isMaterialQuestion && (
+              <>
+                <span className="text-slate-300 dark:text-white/15">·</span>
+                <span className="rounded bg-black/[0.045] px-1.5 py-0.5 text-[11px] font-medium text-[#586070] dark:bg-white/[0.07] dark:text-[#9AA3B2]">
+                  材料 · {subQuestions.length}小题
+                </span>
+              </>
+            )}
             <span className="text-slate-300 dark:text-white/15">·</span>
             <span className="font-medium tabular-nums text-[#181B22] dark:text-[#E6E8EE]">
               {safeIndex + 1} / {questions.length}
@@ -636,295 +1004,243 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
 
       {/* 主视图：桌面端 1px 中线分割双栏独立滚动，移动端上下结构 */}
       <div className="flex-1 min-h-0 lg:overflow-hidden lg:grid lg:grid-cols-2 lg:divide-x lg:divide-slate-900/[0.08] dark:lg:divide-white/[0.065]">
-        {/* 左栏：原题阅读区 */}
+        {/* 左栏：原题阅读区（单题 / 材料组合题自适应） */}
         <section
           aria-label="原题区"
           className="px-4 py-5 sm:px-6 lg:h-full lg:overflow-y-auto lg:px-8 lg:py-6 xl:px-10"
         >
-          {/* 标题（自动隐藏与题干首句重复的派生标题）与作答对比 */}
-          {(() => {
-            const showTitle =
-              Boolean(question.title.trim()) &&
-              !isRedundantTitle(question.title, question.stemText);
-            const showAnswerBadges =
-              Boolean(question.myWrongChoice || displayCorrectAnswer) &&
-              (!hasParsedOptions || (!isAnalysisOpen && selectedChoice === null));
-            if (!showTitle && !showAnswerBadges) return null;
-
-            return (
-              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-                {showTitle ? (
-                  <h1 className="text-base sm:text-lg font-bold tracking-tight text-[#14171F] dark:text-[#F5F7FB]">
+          {isMaterialQuestion && activeSub ? (
+            <div>
+              {/* 可选主标题 */}
+              {Boolean(question.title.trim()) &&
+                !isRedundantTitle(question.title, question.stemText) && (
+                  <h1 className="mb-3 text-base sm:text-lg font-bold tracking-tight text-[#14171F] dark:text-[#F5F7FB]">
                     {question.title}
                   </h1>
-                ) : (
-                  <span />
                 )}
 
-                {showAnswerBadges && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    {isAnalysisOpen || selectedChoice !== null ? (
+              {/* 1. 顶部：共用材料区 */}
+              <div className="rounded-xl border border-slate-900/[0.08] bg-black/[0.015] p-3.5 sm:p-4 dark:border-white/[0.07] dark:bg-white/[0.02]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-[#586070] dark:text-[#9AA3B2]">
+                    共用材料 · 共 {subQuestions.length} 小题
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsMaterialCollapsed((prev) => !prev)}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-[#586070] hover:bg-black/[0.04] hover:text-[#181B22] dark:text-[#9AA3B2] dark:hover:bg-white/[0.06] dark:hover:text-[#F5F7FB] transition-colors"
+                  >
+                    {isMaterialCollapsed ? (
                       <>
-                        {question.myWrongChoice && (
-                          <span className="rounded-md bg-[#C93B3B]/10 px-2 py-0.5 font-medium text-[#C93B3B] dark:bg-[#F06A6A]/15 dark:text-[#F06A6A]">
-                            错选 {question.myWrongChoice}
-                          </span>
-                        )}
-                        {displayCorrectAnswer && (
-                          <span className="rounded-md bg-emerald-600/10 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                            正解 {displayCorrectAnswer}
-                          </span>
-                        )}
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        展开材料
                       </>
                     ) : (
-                      <span className="text-[11px] text-[#7C8594] dark:text-[#6F7787]">
-                        点击下方选项作答或按空格展开解析
-                      </span>
+                      <>
+                        <ChevronUp className="h-3.5 w-3.5" />
+                        收起材料
+                      </>
                     )}
+                  </button>
+                </div>
+
+                {isMaterialCollapsed ? (
+                  <p className="mt-2 truncate text-xs text-[#7C8594] dark:text-[#6F7787]">
+                    {question.stemText.trim() || '（文字材料已折叠）'}
+                    {question.images.length > 0 ? ` · 含 ${question.images.length} 张共用图表` : ''}
+                  </p>
+                ) : (
+                  <div className="mt-3">
+                    {question.stemText.trim() && (
+                      <div className="stem-prose space-y-2.5 select-text">
+                        {renderStemAndOptions({
+                          blocks: stemBlocks,
+                          selected: null,
+                          revealed: false,
+                          correctLetter: null,
+                          wrongLetter: null,
+                          onPickChoice: () => {},
+                          onResetChoice: () => {},
+                          resetLabel: '',
+                          emptyText: '',
+                        })}
+                      </div>
+                    )}
+                    {renderImageGrid(question.images, 'mat', true)}
                   </div>
                 )}
               </div>
-            );
-          })()}
 
-          {/* 图 1 风格原题文本与选项排印器（应用 .stem-prose 响应 Aa 设置） */}
-          <div className="stem-prose space-y-3 select-text">
-            {stemBlocks.length === 0 ? (
-              <p className="text-sm text-[#7C8594] dark:text-[#6F7787]">
-                （此题未录入文字题干，请查看下方附图）
-              </p>
-            ) : (
-              (() => {
-                const nodes: React.ReactNode[] = [];
-                let i = 0;
-                while (i < stemBlocks.length) {
-                  const block = stemBlocks[i];
-                  if (block.kind === 'statement') {
-                    const group: Array<Extract<StemBlock, { kind: 'statement' }>> = [];
-                    while (i < stemBlocks.length && stemBlocks[i].kind === 'statement') {
-                      group.push(stemBlocks[i] as Extract<StemBlock, { kind: 'statement' }>);
-                      i += 1;
-                    }
-                    nodes.push(
-                      <div key={`stmt-${i}`} className="my-3 space-y-2 pl-0.5">
-                        {group.map((st, idx) => (
-                          <div key={`${st.marker}-${idx}`} className="flex items-baseline gap-2.5">
-                            <span className="shrink-0 font-medium text-[#586070] dark:text-[#9AA3B2]">
-                              {st.marker}
-                            </span>
-                            <span
-                              className="min-w-0 flex-1"
-                              dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(st.text) }}
-                            />
-                          </div>
-                        ))}
-                      </div>,
-                    );
-                    continue;
-                  }
+              {/* 2. 中部：小题切换胶囊条 */}
+              <div
+                role="tablist"
+                aria-label="材料小题切换"
+                className="mt-4 flex flex-wrap items-center gap-1.5 border-b border-slate-900/[0.08] pb-3 dark:border-white/[0.065]"
+              >
+                {subQuestions.map((sub, sIdx) => {
+                  const isActiveSub = sIdx === safeSubIndex;
+                  const subLabel = sub.label?.trim() || `第 ${sIdx + 1} 题`;
+                  const picked = selectedChoiceBySubId[sub.id] ?? null;
+                  const subAns =
+                    normalizeAnswerLetter(sub.correctAnswer) ??
+                    normalizeAnswerLetter(extractCorrectAnswer(sub.analysisMarkdown));
+                  const dotClass =
+                    picked !== null && subAns !== null
+                      ? picked === subAns
+                        ? 'bg-emerald-500'
+                        : 'bg-[#C93B3B] dark:bg-[#F06A6A]'
+                      : 'bg-slate-300 dark:bg-white/25';
 
-                  if (block.kind === 'option') {
-                    const options: Array<Extract<StemBlock, { kind: 'option' }>> = [];
-                    while (i < stemBlocks.length && stemBlocks[i].kind === 'option') {
-                      options.push(stemBlocks[i] as Extract<StemBlock, { kind: 'option' }>);
-                      i += 1;
-                    }
-                    const isRevealed = isAnalysisOpen || selectedChoice !== null;
-                    const effectiveWrongChoice = selectedChoice
-                      ? correctLetter && selectedChoice !== correctLetter
-                        ? selectedChoice
-                        : null
-                      : wrongLetter;
-
-                    nodes.push(
-                      <div key={`opts-${i}`} className="mt-4 space-y-2">
-                        {selectedChoice !== null && (
-                          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
-                            <span className="text-[#586070] dark:text-[#9AA3B2]">
-                              已选{' '}
-                              <strong className="font-semibold text-[#181B22] dark:text-[#F5F7FB]">
-                                {selectedChoice}
-                              </strong>
-                              {correctLetter
-                                ? selectedChoice === correctLetter
-                                  ? ' · 回答正确'
-                                  : ` · 正确答案为 ${correctLetter}`
-                                : ''}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedChoice(null);
-                                if (reviewMode === 'self_test') {
-                                  setIsAnalysisOpen(false);
-                                }
-                              }}
-                              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-[#586070] hover:bg-black/[0.04] hover:text-[#181B22] dark:text-[#9AA3B2] dark:hover:bg-white/[0.06] dark:hover:text-[#F5F7FB] transition-colors"
-                            >
-                              <RotateCcw className="h-3 w-3" />
-                              重选 / 重做本题
-                            </button>
-                          </div>
-                        )}
-
-                        {options.map((opt) => {
-                          const isUserPickedCorrect =
-                            selectedChoice !== null &&
-                            correctLetter !== null &&
-                            selectedChoice === opt.letter &&
-                            opt.letter === correctLetter;
-                          const isCorrectOption =
-                            isRevealed && correctLetter !== null && opt.letter === correctLetter;
-                          const isWrongOption =
-                            isRevealed &&
-                            effectiveWrongChoice !== null &&
-                            opt.letter === effectiveWrongChoice &&
-                            opt.letter !== correctLetter;
-
-                          return (
-                            <button
-                              key={opt.letter}
-                              type="button"
-                              onClick={() => {
-                                setSelectedChoice(opt.letter);
-                                setIsAnalysisOpen(true);
-                              }}
-                              className={`group/opt flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-all ${
-                                isCorrectOption
-                                  ? 'border-emerald-500/35 bg-emerald-600/[0.08] dark:border-emerald-400/35 dark:bg-emerald-500/[0.11]'
-                                  : isWrongOption
-                                    ? 'border-[#C93B3B]/35 bg-[#C93B3B]/[0.07] dark:border-[#F06A6A]/35 dark:bg-[#F06A6A]/[0.1]'
-                                    : 'border-transparent bg-black/[0.02] hover:border-slate-900/15 hover:bg-black/[0.04] dark:bg-white/[0.025] dark:hover:border-white/15 dark:hover:bg-white/[0.05]'
-                              }`}
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span
-                                  className={`flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-                                    isCorrectOption
-                                      ? 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-[#0D0E11]'
-                                      : isWrongOption
-                                        ? 'bg-[#C93B3B] text-white dark:bg-[#F06A6A] dark:text-[#0D0E11]'
-                                        : 'border border-slate-300/90 bg-white text-[#586070] group-hover/opt:border-slate-400 dark:border-white/15 dark:bg-white/[0.05] dark:text-[#9AA3B2] dark:group-hover/opt:border-white/30'
-                                  }`}
-                                >
-                                  {opt.letter}
-                                </span>
-                                <span
-                                  className={`min-w-0 break-words ${
-                                    isCorrectOption
-                                      ? 'font-medium text-emerald-800 dark:text-emerald-200'
-                                      : isWrongOption
-                                        ? 'text-[#A82C2C] dark:text-[#F69898]'
-                                        : ''
-                                  }`}
-                                  dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(opt.text) }}
-                                />
-                              </div>
-                              {isCorrectOption && (
-                                <span className="shrink-0 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                                  {isUserPickedCorrect ? '✓ 回答正确' : '✓ 正确答案'}
-                                </span>
-                              )}
-                              {isWrongOption && (
-                                <span className="shrink-0 text-[11px] font-medium text-[#C93B3B] dark:text-[#F06A6A]">
-                                  {selectedChoice === opt.letter ? '✗ 你的选择' : '错选'}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>,
-                    );
-                    continue;
-                  }
-
-                  nodes.push(
-                    <p
-                      key={`p-${i}`}
-                      className="break-words"
-                      dangerouslySetInnerHTML={{ __html: renderStemInlineHtml(block.text) }}
-                    />,
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActiveSub}
+                      onClick={() => setActiveSubIndex(sIdx)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-all ${
+                        isActiveSub
+                          ? 'border-slate-900/60 bg-white font-semibold text-[#181B22] shadow-xs dark:border-white/50 dark:bg-white/[0.1] dark:text-[#F5F7FB]'
+                          : 'border-slate-900/[0.08] bg-black/[0.02] text-[#586070] hover:border-slate-900/20 hover:text-[#181B22] dark:border-white/[0.07] dark:bg-white/[0.02] dark:text-[#9AA3B2] dark:hover:border-white/20 dark:hover:text-[#E6E8EE]'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+                      <span>{subLabel}</span>
+                    </button>
                   );
-                  i += 1;
-                }
-                return nodes;
-              })()
-            )}
-          </div>
+                })}
+              </div>
 
-          {/* 原题配图区：无厚外框，单图舒展展示 + 右上角悬浮毛玻璃护眼反色与放大胶囊 */}
-          {question.images.length > 0 && (
-            <div
-              className={`mt-5 grid gap-3 ${
-                question.images.length === 1 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'
-              }`}
-            >
-              {question.images.map((img, idx) => {
-                const override = imgOverride[img.id];
-                const isInverted =
-                  override === 'invert' || (override === undefined && globalDarkInvert);
-                const imgFilterClass =
-                  override === 'invert'
-                    ? 'img-force-invert'
-                    : override === 'normal'
-                      ? ''
-                      : 'review-img-adaptive';
+              {/* 3. 下方：当前选中 activeSub 小题正文区 */}
+              <div className="mt-4">
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-xs font-semibold tracking-wider text-[#586070] dark:text-[#9AA3B2]">
+                    {activeSub.label?.trim() || `第 ${safeSubIndex + 1} 题`}
+                  </span>
+                  {Boolean(activeSub.myWrongChoice || subDisplayCorrectAnswer) &&
+                    (!hasSubParsedOptions || (!isSubAnalysisOpen && activeSubChoice === null)) && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        {isSubAnalysisOpen || activeSubChoice !== null ? (
+                          <>
+                            {activeSub.myWrongChoice && (
+                              <span className="rounded-md bg-[#C93B3B]/10 px-2 py-0.5 font-medium text-[#C93B3B] dark:bg-[#F06A6A]/15 dark:text-[#F06A6A]">
+                                错选 {activeSub.myWrongChoice}
+                              </span>
+                            )}
+                            {subDisplayCorrectAnswer && (
+                              <span className="rounded-md bg-emerald-600/10 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                正解 {subDisplayCorrectAnswer}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-[#7C8594] dark:text-[#6F7787]">
+                            点击下方选项作答或按空格展开解析
+                          </span>
+                        )}
+                      </div>
+                    )}
+                </div>
+
+                <div className="stem-prose space-y-3 select-text">
+                  {renderStemAndOptions({
+                    blocks: subStemBlocks,
+                    selected: activeSubChoice,
+                    revealed: isSubAnalysisOpen,
+                    correctLetter: subCorrectLetter,
+                    wrongLetter: subWrongLetter,
+                    onPickChoice: (letter) => {
+                      setSelectedChoiceBySubId((prev) => ({ ...prev, [activeSub.id]: letter }));
+                      setAnalysisOpenBySubId((prev) => ({ ...prev, [activeSub.id]: true }));
+                    },
+                    onResetChoice: () => {
+                      setSelectedChoiceBySubId((prev) => ({ ...prev, [activeSub.id]: null }));
+                      if (reviewMode === 'self_test') {
+                        setAnalysisOpenBySubId((prev) => ({ ...prev, [activeSub.id]: false }));
+                      }
+                    },
+                    resetLabel: '重做此小题',
+                    emptyText: '（此小题未录入文字题干，请查看下方附图）',
+                  })}
+                </div>
+
+                {renderImageGrid(activeSub.images, `sub-${activeSub.id}`)}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* 普通单题：标题（自动隐藏与题干首句重复的派生标题）与作答对比 */}
+              {(() => {
+                const showTitle =
+                  Boolean(question.title.trim()) &&
+                  !isRedundantTitle(question.title, question.stemText);
+                const showAnswerBadges =
+                  Boolean(question.myWrongChoice || singleDisplayCorrectAnswer) &&
+                  (!hasSingleParsedOptions || (!isAnalysisOpen && selectedChoice === null));
+                if (!showTitle && !showAnswerBadges) return null;
 
                 return (
-                  <div key={img.id} className="group relative">
-                    <div
-                      onClick={() => openImageAt(idx)}
-                      className="relative cursor-zoom-in overflow-hidden rounded-xl border border-slate-900/[0.06] dark:border-white/[0.06]"
-                    >
-                      <img
-                        src={img.dataUrl}
-                        alt={img.caption || `原题附图 ${idx + 1}`}
-                        className={`block w-full bg-white object-contain ${imgFilterClass} ${
-                          question.images.length === 1 ? 'max-h-[460px]' : 'max-h-60'
-                        }`}
-                      />
+                  <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                    {showTitle ? (
+                      <h1 className="text-base sm:text-lg font-bold tracking-tight text-[#14171F] dark:text-[#F5F7FB]">
+                        {question.title}
+                      </h1>
+                    ) : (
+                      <span />
+                    )}
 
-                      {/* 右上角悬浮毛玻璃微胶囊：护眼反色切换 + 放大看图 */}
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute top-2.5 right-2.5 z-10 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/55 backdrop-blur-md px-1.5 py-1 text-[11px] text-white/90 shadow-sm"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleImageInvert(img.id)}
-                          aria-pressed={isInverted}
-                          title="切换护眼反色"
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-colors ${
-                            isInverted
-                              ? 'bg-white text-[#0D0E11] font-medium'
-                              : 'text-white/85 hover:bg-white/15'
-                          }`}
-                        >
-                          <Contrast className="h-3 w-3" />
-                          <span>反色</span>
-                        </button>
-                        <span className="h-3 w-px bg-white/20" />
-                        <button
-                          type="button"
-                          onClick={() => openImageAt(idx)}
-                          title="放大看高清原图"
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-white/90 hover:bg-white/15 transition-colors"
-                        >
-                          <Maximize2 className="h-3 w-3" />
-                          <span>放大</span>
-                        </button>
+                    {showAnswerBadges && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        {isAnalysisOpen || selectedChoice !== null ? (
+                          <>
+                            {question.myWrongChoice && (
+                              <span className="rounded-md bg-[#C93B3B]/10 px-2 py-0.5 font-medium text-[#C93B3B] dark:bg-[#F06A6A]/15 dark:text-[#F06A6A]">
+                                错选 {question.myWrongChoice}
+                              </span>
+                            )}
+                            {singleDisplayCorrectAnswer && (
+                              <span className="rounded-md bg-emerald-600/10 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                正解 {singleDisplayCorrectAnswer}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-[#7C8594] dark:text-[#6F7787]">
+                            点击下方选项作答或按空格展开解析
+                          </span>
+                        )}
                       </div>
-                    </div>
-
-                    {img.caption && (
-                      <p className="mt-1.5 text-center text-xs text-[#7C8594] dark:text-[#6F7787]">
-                        {img.caption}
-                      </p>
                     )}
                   </div>
                 );
-              })}
-            </div>
+              })()}
+
+              {/* 图 1 风格原题文本与选项排印器（应用 .stem-prose 响应 Aa 设置） */}
+              <div className="stem-prose space-y-3 select-text">
+                {renderStemAndOptions({
+                  blocks: stemBlocks,
+                  selected: selectedChoice,
+                  revealed: isAnalysisOpen,
+                  correctLetter: singleCorrectLetter,
+                  wrongLetter: singleWrongLetter,
+                  onPickChoice: (letter) => {
+                    setSelectedChoice(letter);
+                    setIsAnalysisOpen(true);
+                  },
+                  onResetChoice: () => {
+                    setSelectedChoice(null);
+                    if (reviewMode === 'self_test') {
+                      setIsAnalysisOpen(false);
+                    }
+                  },
+                  resetLabel: '重选 / 重做本题',
+                  emptyText: '（此题未录入文字题干，请查看下方附图）',
+                })}
+              </div>
+
+              {/* 原题配图区 */}
+              {renderImageGrid(question.images, 'single')}
+            </>
           )}
 
           {/* 标签 */}
@@ -952,12 +1268,20 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-xs font-semibold tracking-wider text-[#7C8594] dark:text-[#6F7787] uppercase">
-                AI 复盘精析
+                {isMaterialQuestion && activeSub
+                  ? `AI 复盘精析 · ${activeSub.label?.trim() || `第 ${safeSubIndex + 1} 小题`}`
+                  : 'AI 复盘精析'}
               </h2>
-              {isAnalysisOpen && (
+              {currentAnalysisOpen && (
                 <button
                   type="button"
-                  onClick={() => setIsAnalysisOpen(false)}
+                  onClick={() => {
+                    if (isMaterialQuestion && activeSub) {
+                      setAnalysisOpenBySubId((prev) => ({ ...prev, [activeSub.id]: false }));
+                    } else {
+                      setIsAnalysisOpen(false);
+                    }
+                  }}
                   className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-[#7C8594] dark:text-[#6F7787] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-slate-900 dark:hover:text-[#E6E8EE] transition-colors"
                 >
                   <EyeOff className="h-3 w-3" />
@@ -966,19 +1290,23 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
               )}
             </div>
 
-            {isAnalysisOpen ? (
+            {currentAnalysisOpen ? (
               <MarkdownView
-                markdown={question.analysisMarkdown}
+                markdown={currentAnalysisMarkdown}
                 editable
-                onSaveMarkdown={(nextMarkdown) =>
-                  onUpdateQuestionInline(question.id, { analysisMarkdown: nextMarkdown })
-                }
+                onSaveMarkdown={handleSaveAnalysis}
                 placeholder="暂无 AI 复盘解析，可点击右上角「编辑原文」自行补充。"
               />
             ) : (
               <button
                 type="button"
-                onClick={() => setIsAnalysisOpen(true)}
+                onClick={() => {
+                  if (isMaterialQuestion && activeSub) {
+                    setAnalysisOpenBySubId((prev) => ({ ...prev, [activeSub.id]: true }));
+                  } else {
+                    setIsAnalysisOpen(true);
+                  }
+                }}
                 className="group flex w-full flex-col items-center justify-center rounded-2xl border border-slate-900/[0.08] bg-white/75 px-6 py-14 text-center backdrop-blur-md transition-all hover:border-slate-900/20 hover:bg-white dark:border-white/[0.08] dark:bg-white/[0.025] dark:hover:border-white/20 dark:hover:bg-white/[0.045]"
               >
                 <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-slate-900/[0.08] bg-black/[0.03] text-[#586070] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-[#9AA3B2] group-hover:scale-105 transition-transform">
@@ -1000,10 +1328,43 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
 
           {/* 个人考场笔记区 */}
           <div className="mt-8 border-t border-slate-900/[0.08] dark:border-white/[0.065] pt-6">
-            <div className="mb-2.5 flex items-center justify-between gap-2">
-              <h2 className="text-xs font-semibold tracking-wider text-[#7C8594] dark:text-[#6F7787] uppercase">
-                个人考场笔记
-              </h2>
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs font-semibold tracking-wider text-[#7C8594] dark:text-[#6F7787] uppercase">
+                  {isMaterialQuestion && activeSub
+                    ? materialNoteScope === 'sub'
+                      ? `个人考场笔记 · 第 ${safeSubIndex + 1} 小题笔记`
+                      : '个人考场笔记 · 套题总笔记'
+                    : '个人考场笔记'}
+                </h2>
+                {isMaterialQuestion && activeSub && (
+                  <div className="inline-flex rounded-md bg-black/[0.04] p-0.5 text-[11px] dark:bg-white/[0.05]">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialNoteScope('sub')}
+                      className={`rounded px-1.5 py-0.5 transition-colors ${
+                        materialNoteScope === 'sub'
+                          ? 'bg-white font-medium text-[#181B22] shadow-xs dark:bg-[#232730] dark:text-[#F5F7FB]'
+                          : 'text-[#7C8594] dark:text-[#6F7787]'
+                      }`}
+                    >
+                      小题笔记
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMaterialNoteScope('main')}
+                      className={`rounded px-1.5 py-0.5 transition-colors ${
+                        materialNoteScope === 'main'
+                          ? 'bg-white font-medium text-[#181B22] shadow-xs dark:bg-[#232730] dark:text-[#F5F7FB]'
+                          : 'text-[#7C8594] dark:text-[#6F7787]'
+                      }`}
+                    >
+                      套题总笔记
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center gap-2">
                 {noteSavedToast && (
                   <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
@@ -1099,12 +1460,12 @@ export const ReviewDeck: React.FC<ReviewDeckProps> = ({
         </div>
       </div>
 
-      {/* 暗房质感看图灯箱 */}
+      {/* 暗房质感看图灯箱（严格绑定当前点击的图片集：共用材料图集或当前小题图集） */}
       <ImageLightbox
-        images={question.images}
-        initialIndex={lightboxIndex}
-        isOpen={lightboxOpen}
-        onClose={() => setLightboxOpen(false)}
+        images={lightboxState.images}
+        initialIndex={lightboxState.index}
+        isOpen={lightboxState.open}
+        onClose={() => setLightboxState((prev) => ({ ...prev, open: false }))}
       />
     </div>
   );

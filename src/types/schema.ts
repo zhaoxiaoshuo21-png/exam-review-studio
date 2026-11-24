@@ -32,17 +32,43 @@ export interface QuestionImage {
   caption?: string;
 }
 
+/** 题目结构形态：普通单题 / 一拖N 材料组合题 */
+export type QuestionEntryKind = 'single' | 'material';
+
+/** 材料组合题（一拖N）中的单道小题 */
+export interface SubQuestionItem {
+  id: string;
+  /** 小题标签，如 "第1题" */
+  label?: string;
+  /** 小题题干与 A/B/C/D 选项 */
+  stemText: string;
+  /** 该小题专属配图（可选，与共用材料图独立） */
+  images: QuestionImage[];
+  /** 错选答案（可选） */
+  myWrongChoice?: string;
+  /** 正确答案（可选，留空时自动从该小题解析提取） */
+  correctAnswer?: string;
+  /** 该小题的 AI 复盘 Markdown */
+  analysisMarkdown: string;
+  /** 该小题的个人笔记（可选） */
+  personalNote?: string;
+}
+
 /** 单道题目实体 */
 export interface QuestionItem {
   id: string;
   folderId: string;
   questionType: QuestionType;
+  /** 题目结构形态：未指定时视为 'single'（100% 兼容历史题库） */
+  entryKind?: QuestionEntryKind;
   /** 简短标题或题干首句摘要 */
   title: string;
-  /** 原题文本 */
+  /** 原题文本；当 entryKind === 'material' 时作为共用大材料文本 */
   stemText: string;
-  /** 原题附图（支持图推多图/资料分析图表） */
+  /** 原题附图（支持图推多图/资料分析共用统计图表） */
   images: QuestionImage[];
+  /** 当 entryKind === 'material' 时存放多道小题 */
+  subQuestions?: SubQuestionItem[];
   /** 用户错选答案（可选，如 B） */
   myWrongChoice?: string;
   /** 正确答案（可选，如 A） */

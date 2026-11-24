@@ -109,4 +109,49 @@ describe('htmlExporter', () => {
     expect(roundTrip?.questions).toHaveLength(2);
     vi.unstubAllGlobals();
   });
+
+  it('losslessly round-trips material questions with subQuestions and sub-images through self-contained HTML', () => {
+    const seed = createSeedSnapshot();
+    seed.questions.push({
+      ...seed.questions[0],
+      id: 'mat-export-1',
+      entryKind: 'material',
+      title: '一拖五判断推理组合题',
+      stemText: '给定共用逻辑约束条件',
+      subQuestions: [
+        {
+          id: 'sub-a',
+          label: '第1题',
+          stemText: '小题1题干\nA. 甲\nB. 乙',
+          images: [
+            {
+              id: 'sub-a-img',
+              dataUrl: 'data:image/png;base64,c3ViQQ==',
+              width: 400,
+              height: 220,
+            },
+          ],
+          correctAnswer: 'A',
+          analysisMarkdown: '包含安全边界 </script> 与 $\\frac{1}{2}$',
+        },
+      ],
+      isSeedDemo: false,
+    });
+
+    const baseHtml =
+      '<!doctype html><html lang="zh-CN" class="dark"><head></head><body><div id="root"></div><script id="EXAM_REVIEW_EMBEDDED_DATA" type="application/json">null' +
+      CLOSING_SCRIPT +
+      '</body></html>';
+
+    const exportedHtml = buildSelfContainedHtmlString(baseHtml, seed);
+    const restored = parseEmbeddedSnapshotFromHtml(exportedHtml);
+    const mat = restored?.questions.find((q) => q.id === 'mat-export-1');
+
+    expect(mat?.entryKind).toBe('material');
+    expect(mat?.subQuestions).toHaveLength(1);
+    expect(mat?.subQuestions?.[0].images[0].dataUrl).toBe('data:image/png;base64,c3ViQQ==');
+    expect(mat?.subQuestions?.[0].analysisMarkdown).toBe(
+      '包含安全边界 </script> 与 $\\frac{1}{2}$',
+    );
+  });
 });

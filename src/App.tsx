@@ -131,6 +131,14 @@ function filterAndSortQuestions(
 
     if (query) {
       const folderName = folderNameMap.get(q.folderId) ?? '';
+      const subText = (q.subQuestions ?? [])
+        .flatMap((sub) => [
+          sub.label ?? '',
+          sub.stemText,
+          sub.analysisMarkdown,
+          sub.personalNote ?? '',
+        ])
+        .join('\n');
       const haystack = [
         q.title,
         q.stemText,
@@ -138,6 +146,7 @@ function filterAndSortQuestions(
         q.personalNote,
         q.tags.join(' '),
         folderName,
+        subText,
       ]
         .join('\n')
         .toLowerCase();
@@ -526,7 +535,10 @@ export function App(): React.ReactElement {
     (
       questionId: string,
       patch: Partial<
-        Pick<QuestionItem, 'analysisMarkdown' | 'personalNote' | 'title' | 'stemText'>
+        Pick<
+          QuestionItem,
+          'analysisMarkdown' | 'personalNote' | 'title' | 'stemText' | 'subQuestions'
+        >
       >,
     ) => {
       const now = Date.now();
@@ -576,9 +588,12 @@ export function App(): React.ReactElement {
             ...existing,
             folderId: draft.folderId,
             questionType: draft.questionType,
+            entryKind: draft.entryKind ?? 'single',
             title: draft.title,
             stemText: draft.stemText,
             images: draft.images,
+            subQuestions:
+              draft.entryKind === 'material' ? draft.subQuestions : undefined,
             myWrongChoice: draft.myWrongChoice,
             correctAnswer: draft.correctAnswer,
             analysisMarkdown: draft.analysisMarkdown,
@@ -614,9 +629,12 @@ export function App(): React.ReactElement {
           id: targetId,
           folderId: draft.folderId,
           questionType: draft.questionType,
+          entryKind: draft.entryKind ?? 'single',
           title: draft.title,
           stemText: draft.stemText,
           images: draft.images,
+          subQuestions:
+            draft.entryKind === 'material' ? draft.subQuestions : undefined,
           myWrongChoice: draft.myWrongChoice,
           correctAnswer: draft.correctAnswer,
           analysisMarkdown: draft.analysisMarkdown,
@@ -635,7 +653,11 @@ export function App(): React.ReactElement {
         setSnapshot((prev) =>
           prev ? { ...prev, questions: [...prev.questions, targetQuestion] } : prev,
         );
-        showToast('已录入新题到题库');
+        showToast(
+          draft.entryKind === 'material'
+            ? `已录入材料组合题（含 ${draft.subQuestions?.length ?? 0} 小题）`
+            : '已录入新题到题库',
+        );
       }
 
       if (!questionMatchesFilter(targetQuestion, snapshot.folders, filter, now)) {
@@ -669,9 +691,12 @@ export function App(): React.ReactElement {
         id: `${makeId('q')}_${idx}`,
         folderId: draft.folderId,
         questionType: draft.questionType,
+        entryKind: draft.entryKind ?? 'single',
         title: draft.title,
         stemText: draft.stemText,
         images: draft.images,
+        subQuestions:
+          draft.entryKind === 'material' ? draft.subQuestions : undefined,
         myWrongChoice: draft.myWrongChoice,
         correctAnswer: draft.correctAnswer,
         analysisMarkdown: draft.analysisMarkdown,
@@ -701,7 +726,13 @@ export function App(): React.ReactElement {
       pendingJumpIdRef.current = firstNew.id;
       setIsBatchImportOpen(false);
       setViewMode('review');
-      showToast(`已批量导入 ${created.length} 道题，已跳转到第 1 道新题`);
+      if (created.length === 1 && firstNew.entryKind === 'material') {
+        showToast(
+          `已合并导入 1 套材料组合题（共 ${firstNew.subQuestions?.length ?? 0} 小题），已跳转到该题`,
+        );
+      } else {
+        showToast(`已批量导入 ${created.length} 道题，已跳转到第 1 道新题`);
+      }
     },
     [snapshot, showToast],
   );

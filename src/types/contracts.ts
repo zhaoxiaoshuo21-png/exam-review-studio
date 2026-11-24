@@ -3,11 +3,13 @@ import type {
   FolderNode,
   MasteryLevel,
   ProgressOnlyPatch,
+  QuestionEntryKind,
   QuestionImage,
   QuestionItem,
   QuestionType,
   ReviewFilter,
   ReviewMode,
+  SubQuestionItem,
   ThemeMode,
 } from './schema';
 
@@ -20,6 +22,12 @@ export interface ParsedBatchItem {
   analysisMarkdown: string;
   correctAnswer?: string;
   images: QuestionImage[];
+}
+
+/** 材料组合题（一拖N）整篇拆解结果 */
+export interface ParsedMaterialPack {
+  materialStemText: string;
+  subItems: ParsedBatchItem[];
 }
 
 /** 核心引擎层必须由 src/core/* 导出的统一契约 */
@@ -74,7 +82,12 @@ export interface ReviewDeckProps {
   onToggleStar: (questionId: string) => void;
   onUpdateQuestionInline: (
     questionId: string,
-    patch: Partial<Pick<QuestionItem, 'analysisMarkdown' | 'personalNote' | 'title' | 'stemText'>>,
+    patch: Partial<
+      Pick<
+        QuestionItem,
+        'analysisMarkdown' | 'personalNote' | 'title' | 'stemText' | 'subQuestions'
+      >
+    >,
   ) => void;
   onOpenEditModal: (question: QuestionItem) => void;
   onDeleteQuestion: (questionId: string) => void;
@@ -125,9 +138,11 @@ export type QuestionDraftInput = {
   id?: string;
   folderId: string;
   questionType: QuestionType;
+  entryKind?: QuestionEntryKind;
   title: string;
   stemText: string;
   images: QuestionImage[];
+  subQuestions?: SubQuestionItem[];
   myWrongChoice?: string;
   correctAnswer?: string;
   analysisMarkdown: string;

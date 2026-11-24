@@ -100,6 +100,16 @@ export const QuestionList: React.FC<QuestionListProps> = ({
         {questions.map((q) => {
           const isCurrent = q.id === currentQuestionId;
           const isDue = q.nextReviewAt <= now;
+          const isMaterial =
+            q.entryKind === 'material' &&
+            Array.isArray(q.subQuestions) &&
+            q.subQuestions.length > 0;
+          const subCount = isMaterial ? q.subQuestions!.length : 0;
+          const totalImagesCount =
+            q.images.length +
+            (isMaterial
+              ? q.subQuestions!.reduce((sum, sub) => sum + (sub.images?.length ?? 0), 0)
+              : 0);
           const typeMeta = QUESTION_TYPE_META[q.questionType];
           const masteryMeta = MASTERY_META[q.mastery];
           const folderPath = folderPathMap.get(q.folderId) ?? '未分类';
@@ -107,6 +117,7 @@ export const QuestionList: React.FC<QuestionListProps> = ({
           const displayTitle =
             q.title.trim() ||
             q.stemText.trim().split(/\r?\n/)[0]?.slice(0, 48) ||
+            (isMaterial ? q.subQuestions![0]?.stemText.trim().split(/\r?\n/)[0]?.slice(0, 48) : '') ||
             '未命名题目';
 
           return (
@@ -126,6 +137,11 @@ export const QuestionList: React.FC<QuestionListProps> = ({
                     <span className={`font-medium ${typeMeta.textClass}`}>
                       {typeMeta.label}
                     </span>
+                    {isMaterial && (
+                      <span className="rounded bg-slate-900/[0.06] px-1.5 py-0.5 text-[11px] font-medium text-[#586070] dark:bg-white/[0.08] dark:text-[#9AA3B2]">
+                        材料 · {subCount}小题
+                      </span>
+                    )}
                     <span className="text-slate-300 dark:text-white/15">·</span>
                     <span
                       className={`inline-flex items-center gap-1.5 ${masteryMeta.textClass}`}
@@ -224,10 +240,10 @@ export const QuestionList: React.FC<QuestionListProps> = ({
                   <span className="rounded bg-black/[0.035] dark:bg-white/[0.05] px-2 py-0.5 text-[#586070] dark:text-[#9AA3B2]">
                     {folderPath}
                   </span>
-                  {q.images.length > 0 && (
+                  {totalImagesCount > 0 && (
                     <span className="inline-flex items-center gap-1 rounded bg-black/[0.035] dark:bg-white/[0.05] px-1.5 py-0.5 text-[#586070] dark:text-[#9AA3B2]">
                       <ImageIcon className="h-3 w-3" />
-                      {q.images.length} 图
+                      {totalImagesCount} 图
                     </span>
                   )}
                   {(q.myWrongChoice || q.correctAnswer) && (
